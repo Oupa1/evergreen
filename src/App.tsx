@@ -11,6 +11,7 @@ import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import StudentDashboard from './pages/StudentDashboard';
 import TeacherDashboard from './pages/TeacherDashboard';
+import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import { ThemeProvider } from './components/ThemeProvider';
 
 function ScrollToTop() {
@@ -25,7 +26,8 @@ function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const isDashboard = location.pathname.startsWith('/admin') || 
                       location.pathname.startsWith('/student') || 
-                      location.pathname.startsWith('/teacher');
+                      location.pathname.startsWith('/teacher') ||
+                      location.pathname.startsWith('/super-admin');
 
   return (
     <div className="min-h-screen bg-white font-sans selection:bg-primary-100 selection:text-primary-900">
@@ -38,6 +40,14 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const schoolId = params.get('school_id');
+    if (schoolId) {
+      localStorage.setItem('school_id', schoolId);
+    }
+  }, []);
 
   return (
     <ThemeProvider>
@@ -57,6 +67,7 @@ export default function App() {
             <Route path="/contact" element={<Contact />} />
             <Route path="/login" element={<Login />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/super-admin" element={<SuperAdminDashboard />} />
             <Route path="/student" element={<StudentDashboard />} />
             <Route path="/teacher" element={<TeacherDashboard />} />
           </Routes>

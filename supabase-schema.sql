@@ -1,7 +1,8 @@
 -- 1. Grades Table
 CREATE TABLE IF NOT EXISTS grades (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -10,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sections (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     grade_id UUID REFERENCES grades(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(grade_id, name)
 );
@@ -30,6 +32,7 @@ CREATE TABLE IF NOT EXISTS teachers (
     email TEXT UNIQUE NOT NULL,
     phone TEXT,
     password TEXT DEFAULT 'teacher123',
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -55,6 +58,7 @@ CREATE TABLE IF NOT EXISTS subjects (
     name TEXT NOT NULL,
     code TEXT NOT NULL UNIQUE,
     pass_mark INTEGER DEFAULT 50,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -72,6 +76,7 @@ CREATE TABLE IF NOT EXISTS class_subjects (
     section_id UUID REFERENCES sections(id) ON DELETE CASCADE,
     subject_id UUID REFERENCES subjects(id) ON DELETE CASCADE,
     periods_per_week INTEGER DEFAULT 0,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(section_id, subject_id)
 );
@@ -95,6 +100,7 @@ CREATE TABLE IF NOT EXISTS students (
     last_name TEXT NOT NULL,
     email TEXT UNIQUE,
     student_id TEXT UNIQUE, -- Custom student ID like S001 (Accession Number)
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -107,6 +113,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='students' AND column_name='password') THEN
         ALTER TABLE students ADD COLUMN password TEXT DEFAULT '12345';
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='students' AND column_name='phone') THEN
+        ALTER TABLE students ADD COLUMN phone TEXT;
+    END IF;
 END $$;
 
 -- 6. Results Table
@@ -117,6 +126,7 @@ CREATE TABLE IF NOT EXISTS results (
     score NUMERIC NOT NULL CHECK (score >= 0 AND score <= 100),
     term TEXT NOT NULL, -- e.g. Term 1, Term 2
     year INTEGER NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -131,6 +141,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     weighting NUMERIC NOT NULL DEFAULT 100,
     term TEXT NOT NULL,
     year INTEGER NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -147,11 +158,20 @@ CREATE TABLE IF NOT EXISTS admins (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 9. School Info Table
-CREATE TABLE IF NOT EXISTS school_info (
+-- 8.1 Super Admins Table
+CREATE TABLE IF NOT EXISTS super_admins (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 9. Schools Table
+CREATE TABLE IF NOT EXISTS schools (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     name TEXT NOT NULL,
     logo TEXT,
@@ -164,6 +184,7 @@ CREATE TABLE IF NOT EXISTS school_info (
     secondary_color TEXT DEFAULT '#10b981',
     timetable_config JSONB DEFAULT '{"startTime": "08:00", "periodDuration": 40, "knockOffTime": "15:00", "breakTimes": []}'::jsonb,
     sms_config JSONB DEFAULT '{"apiKey": "", "senderId": ""}'::jsonb,
+    school_id INTEGER UNIQUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -192,6 +213,7 @@ CREATE TABLE IF NOT EXISTS timetable_allocations (
     teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
     day TEXT NOT NULL,
     period TEXT NOT NULL,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -203,6 +225,7 @@ CREATE TABLE IF NOT EXISTS attendance (
     date DATE NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('Present', 'Absent', 'Late', 'Excused')),
     remarks TEXT,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(student_id, date)
 );
@@ -216,6 +239,7 @@ CREATE TABLE IF NOT EXISTS lessons (
     title TEXT NOT NULL,
     content TEXT,
     file_url TEXT,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -226,6 +250,7 @@ CREATE TABLE IF NOT EXISTS meetings (
     description TEXT,
     date TIMESTAMP WITH TIME ZONE NOT NULL,
     location TEXT,
+    school_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -239,7 +264,7 @@ ALTER TABLE students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
-ALTER TABLE school_info ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schools ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timetable_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lessons ENABLE ROW LEVEL SECURITY;
@@ -275,8 +300,8 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'admins') THEN
         CREATE POLICY "Public Access" ON admins FOR ALL USING (true);
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'school_info') THEN
-        CREATE POLICY "Public Access" ON school_info FOR ALL USING (true);
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'schools') THEN
+        CREATE POLICY "Public Access" ON schools FOR ALL USING (true);
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'timetable_allocations') THEN
         CREATE POLICY "Public Access" ON timetable_allocations FOR ALL USING (true);
@@ -292,14 +317,24 @@ BEGIN
     END IF;
 END $$;
 
+-- Insert default schools if not exists
+INSERT INTO schools (name, school_id)
+SELECT 'Evergreen Academy', 1
+WHERE NOT EXISTS (SELECT 1 FROM schools WHERE school_id = 1);
+
 -- Insert default admin if not exists
-INSERT INTO admins (email, password) 
-SELECT 'admin@evergreen.edu', 'admin123'
+INSERT INTO admins (email, password, school_id) 
+SELECT 'admin@evergreen.edu', 'admin123', 1
 WHERE NOT EXISTS (SELECT 1 FROM admins WHERE email = 'admin@evergreen.edu');
 
+-- Insert default super admin if not exists
+INSERT INTO super_admins (email, password)
+SELECT 'superadmin@system.edu', 'superadmin123'
+WHERE NOT EXISTS (SELECT 1 FROM super_admins WHERE email = 'superadmin@system.edu');
+
 -- Insert default teacher if not exists
-INSERT INTO teachers (first_name, last_name, email, password)
-SELECT 'John', 'Doe', 'teacher@evergreen.edu', 'teacher123'
+INSERT INTO teachers (first_name, last_name, email, password, school_id)
+SELECT 'John', 'Doe', 'teacher@evergreen.edu', 'teacher123', 1
 WHERE NOT EXISTS (SELECT 1 FROM teachers WHERE email = 'teacher@evergreen.edu');
 
 -- Insert default meeting if not exists
@@ -307,8 +342,43 @@ INSERT INTO meetings (title, description, date, location)
 SELECT 'Staff Meeting', 'Monthly staff meeting to discuss academic progress.', NOW() + INTERVAL '1 day', 'Main Hall'
 WHERE NOT EXISTS (SELECT 1 FROM meetings WHERE title = 'Staff Meeting');
 
--- Insert default lesson if not exists
-INSERT INTO lessons (title, content, teacher_id, section_id, subject_id)
-SELECT 'Introduction to Algebra', 'Basic algebraic expressions and equations.', (SELECT id FROM teachers LIMIT 1), (SELECT id FROM sections LIMIT 1), (SELECT id FROM subjects LIMIT 1)
-WHERE NOT EXISTS (SELECT 1 FROM lessons WHERE title = 'Introduction to Algebra')
-AND EXISTS (SELECT 1 FROM teachers) AND EXISTS (SELECT 1 FROM sections) AND EXISTS (SELECT 1 FROM subjects);
+-- 14. Learning Materials Table
+CREATE TABLE IF NOT EXISTS learning_materials (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name TEXT NOT NULL,
+    file_content TEXT NOT NULL, -- Base64 encoded PDF
+    file_type TEXT DEFAULT 'application/pdf',
+    grade_id UUID REFERENCES grades(id) ON DELETE CASCADE,
+    teacher_id UUID REFERENCES teachers(id) ON DELETE SET NULL,
+    school_id INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS for learning_materials
+ALTER TABLE learning_materials ENABLE ROW LEVEL SECURITY;
+
+-- 15. Result Publications Table
+CREATE TABLE IF NOT EXISTS result_publications (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    school_id INTEGER NOT NULL,
+    term TEXT NOT NULL,
+    year INTEGER NOT NULL,
+    is_published BOOLEAN DEFAULT FALSE,
+    published_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(school_id, term, year)
+);
+
+-- Enable RLS for result_publications
+ALTER TABLE result_publications ENABLE ROW LEVEL SECURITY;
+
+-- Create policy for public access (for demo purposes)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'learning_materials') THEN
+        CREATE POLICY "Public Access" ON learning_materials FOR ALL USING (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'result_publications') THEN
+        CREATE POLICY "Public Access" ON result_publications FOR ALL USING (true);
+    END IF;
+END $$;

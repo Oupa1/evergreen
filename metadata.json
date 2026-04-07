@@ -1,5 +1,5 @@
 {
-  "name": "Evergreen Academy",
-  "description": "A modern, professional website for Evergreen Academy, showcasing excellence in education, community, and innovation.",
+  "name": "Multi-School Management System",
+  "description": "A scalable, multi-tenant school management system with super admin control, assessment templates, and school-specific branding.",
   "requestFramePermissions": []
 }

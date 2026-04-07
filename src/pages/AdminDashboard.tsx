@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
@@ -30,15 +30,21 @@ import {
   Folder,
   MessageSquare,
   ShieldCheck,
+  Layers,
   Settings2,
   Printer,
   FileText,
   Lock,
-  RefreshCw
+  RefreshCw,
+  Trophy,
+  Loader2,
+  X,
+  Image as ImageIcon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Grade, Section, Subject, ClassSubject, Student, Result, Task } from '../types';
+import LearnerProfile from '../components/LearnerProfile';
 import { 
   BarChart, 
   Bar, 
@@ -75,11 +81,20 @@ const PASS_MARKS: Record<string, number> = {
   'technology': 40,
 };
 
+const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: number) => {
+  if (!subjectName) return defaultPassMark || 40;
+  const name = subjectName.toLowerCase();
+  if (name.includes('xitsonga')) return 50;
+  return PASS_MARKS[name] || defaultPassMark || 40;
+};
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const { refreshTheme } = useTheme();
+  const school_id_raw = localStorage.getItem('school_id');
+  const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const [expandedCategories, setExpandedCategories] = useState<string[]>(['learner-info', 'curriculum']);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -112,6 +127,7 @@ export default function AdminDashboard() {
   const [studentResults, setStudentResults] = useState<any[]>([]);
   const [showResultsModal, setShowResultsModal] = useState(false);
   const [allResults, setAllResults] = useState<any[]>([]);
+  const [resultPublications, setResultPublications] = useState<any[]>([]);
   const [statsResults, setStatsResults] = useState<any[]>([]);
   const [statsSelectedTerm, setStatsSelectedTerm] = useState('Term 1');
   const [statsSelectedYear, setStatsSelectedYear] = useState(new Date().getFullYear().toString());
@@ -119,14 +135,95 @@ export default function AdminDashboard() {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState(new Date());
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Form states
   const [newGrade, setNewGrade] = useState('');
   const [newSection, setNewSection] = useState({ grade_id: '', name: '', class_teacher_id: '' });
-  const [newSubject, setNewSubject] = useState({ name: '', code: '', pass_mark: 50 });
+  const [newSubject, setNewSubject] = useState({ name: '', code: '', pass_mark: 40 });
   const [newTeacher, setNewTeacher] = useState({ first_name: '', last_name: '', email: '', phone: '', password: 'teacher123' });
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [top5Grade, setTop5Grade] = useState<string>('');
+  const [top5Subject, setTop5Subject] = useState<string>(''); // empty means overall
+  const [top5Results, setTop5Results] = useState<any[]>([]);
+  const [isLoadingTop5, setIsLoadingTop5] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === 'overview') {
+      fetchTop5Data();
+    }
+  }, [activeTab, top5Grade, top5Subject]);
+
+  const fetchTop5Data = async () => {
+    setIsLoadingTop5(true);
+    try {
+      let query = supabase
+        .from('results')
+        .select(`
+          *,
+          students:student_id (
+            id,
+            first_name,
+            last_name,
+            student_id,
+            phone,
+            section_id,
+            sections:section_id (
+              name,
+              grade_id,
+              grades:grade_id (
+                name
+              )
+            )
+          )
+        `)
+        .eq('school_id', school_id);
+
+      if (top5Subject) {
+        query = query.eq('subject_id', top5Subject);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Group by student and calculate average
+      const studentMap: { [key: string]: any } = {};
+      data?.forEach(r => {
+        if (!r.students) return;
+        
+        // Filter by grade if selected
+        if (top5Grade && r.students.sections?.grade_id !== top5Grade) return;
+
+        if (!studentMap[r.student_id]) {
+          studentMap[r.student_id] = {
+            ...r.students,
+            totalScore: 0,
+            count: 0
+          };
+        }
+        studentMap[r.student_id].totalScore += r.score;
+        studentMap[r.student_id].count += 1;
+      });
+
+      const processed = Object.values(studentMap).map(s => ({
+        ...s,
+        average: s.totalScore / s.count
+      })).sort((a, b) => b.average - a.average).slice(0, 5);
+
+      setTop5Results(processed);
+    } catch (error) {
+      console.error('Error fetching top 5:', error);
+    } finally {
+      setIsLoadingTop5(false);
+    }
+  };
+
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
     title: string;
@@ -155,15 +252,26 @@ export default function AdminDashboard() {
   const [isSendingSms, setIsSendingSms] = useState(false);
   const [smsBalance, setSmsBalance] = useState<number | null>(null);
   const [isFetchingBalance, setIsFetchingBalance] = useState(false);
-
   const [smsBalanceError, setSmsBalanceError] = useState<string | null>(null);
+  const [selectedProfileStudent, setSelectedProfileStudent] = useState<any | null>(null);
+  const lastSMSFetchTime = useRef<number>(0);
+  const lastFailedSMSConfig = useRef<string>('');
 
   const fetchSMSBalance = async (manual = false) => {
     if (!schoolInfo.sms_config?.username || !schoolInfo.sms_config?.password) return;
     
+    // Throttle automatic fetches to once every 30 seconds
+    const now = Date.now();
+    if (!manual && now - lastSMSFetchTime.current < 30000) return;
+    
+    // Avoid retrying if the current config is known to be failing
+    const currentConfig = `${schoolInfo.sms_config.username}:${schoolInfo.sms_config.password}`;
+    if (!manual && lastFailedSMSConfig.current === currentConfig) return;
+
     setIsFetchingBalance(true);
     setSmsBalanceError(null);
     try {
+      lastSMSFetchTime.current = now;
       const response = await fetch('/api/sms-balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -174,8 +282,16 @@ export default function AdminDashboard() {
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to fetch balance');
+      if (!response.ok) {
+        // If it's a credentials error, remember this config as failing
+        if (data.error?.toLowerCase().includes('credentials') || response.status === 401) {
+          lastFailedSMSConfig.current = currentConfig;
+        }
+        throw new Error(data.error || 'Failed to fetch balance');
+      }
       
+      // Success - clear failed config
+      lastFailedSMSConfig.current = '';
       setSmsBalance(data.balance);
       if (manual) showMessage('success', 'Balance updated');
     } catch (error: any) {
@@ -302,7 +418,8 @@ export default function AdminDashboard() {
       .from('results')
       .select('*')
       .eq('subject_id', resultSelectedSubject)
-      .eq('year', parseInt(resultSelectedYear));
+      .eq('year', parseInt(resultSelectedYear))
+      .eq('school_id', school_id);
     
     if (error) {
       console.error('Error fetching results:', error);
@@ -320,7 +437,8 @@ export default function AdminDashboard() {
       .from('results')
       .select('*')
       .eq('term', statsSelectedTerm)
-      .eq('year', parseInt(statsSelectedYear));
+      .eq('year', parseInt(statsSelectedYear))
+      .eq('school_id', school_id);
     
     if (error) {
       console.error('Error fetching stats results:', error);
@@ -334,6 +452,34 @@ export default function AdminDashboard() {
       fetchStatsResults();
     }
   }, [activeTab, statsSelectedTerm, statsSelectedYear]);
+
+  const fetchResultPublications = async () => {
+    const { data } = await supabase
+      .from('result_publications')
+      .select('*')
+      .eq('school_id', school_id);
+    if (data) setResultPublications(data);
+  };
+
+  const toggleResultPublication = async (term: string, year: number, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('result_publications')
+        .upsert({
+          school_id,
+          term,
+          year: parseInt(year.toString()),
+          is_published: !currentStatus,
+          published_at: !currentStatus ? new Date().toISOString() : null
+        }, { onConflict: 'school_id,term,year' });
+
+      if (error) throw error;
+      fetchResultPublications();
+      showMessage('success', `Results for ${term} ${year} ${!currentStatus ? 'published' : 'unpublished'} successfully!`);
+    } catch (error: any) {
+      showMessage('error', error.message);
+    }
+  };
 
   const fetchScheduleResults = async () => {
     if (!scheduleSelectedGrade || scheduleSelectedSections.length === 0) {
@@ -358,7 +504,8 @@ export default function AdminDashboard() {
         .select('*')
         .in('student_id', studentIds)
         .eq('term', scheduleSelectedTerm)
-        .eq('year', parseInt(scheduleSelectedYear));
+        .eq('year', parseInt(scheduleSelectedYear))
+        .eq('school_id', school_id);
 
       if (error) throw error;
       setScheduleResults(data || []);
@@ -379,18 +526,19 @@ export default function AdminDashboard() {
   async function fetchInitialData(silent = false) {
     if (!silent) setLoading(true);
     try {
-      const [gradesRes, sectionsRes, subjectsRes, teachersRes, studentsRes, tasksRes, classSubjectsRes, schoolInfoRes, timetableRes, studentsCount, subjectsCount] = await Promise.all([
-        supabase.from('grades').select('*').order('name'),
-        supabase.from('sections').select('*, teachers(first_name, last_name)').order('name'),
-        supabase.from('subjects').select('*').order('name'),
-        supabase.from('teachers').select('*').order('first_name'),
-        supabase.from('students').select('*, sections(name, grade_id, grades(name))').order('last_name'),
-        supabase.from('tasks').select('*').order('created_at', { ascending: false }),
-        supabase.from('class_subjects').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)'),
-        supabase.from('school_info').select('id, name, logo, mission, vision, contact, type, level, primary_color, secondary_color, timetable_config, sms_config').single(),
-        supabase.from('timetable_allocations').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)'),
-        supabase.from('students').select('*', { count: 'exact', head: true }),
-        supabase.from('subjects').select('*', { count: 'exact', head: true }),
+      const [gradesRes, sectionsRes, subjectsRes, teachersRes, studentsRes, tasksRes, classSubjectsRes, schoolInfoRes, timetableRes, studentsCount, subjectsCount, resPubsRes] = await Promise.all([
+        supabase.from('grades').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
+        supabase.from('sections').select('*, teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
+        supabase.from('subjects').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
+        supabase.from('teachers').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('first_name'),
+        supabase.from('students').select('*, sections(name, grade_id, grades(name))').or(`school_id.eq.${school_id},school_id.is.null`).order('last_name'),
+        supabase.from('tasks').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('created_at', { ascending: false }),
+        supabase.from('class_subjects').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
+        supabase.from('schools').select('*').eq('school_id', school_id).single(),
+        supabase.from('timetable_allocations').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
+        supabase.from('students').select('*', { count: 'exact', head: true }).or(`school_id.eq.${school_id},school_id.is.null`),
+        supabase.from('subjects').select('*', { count: 'exact', head: true }).or(`school_id.eq.${school_id},school_id.is.null`),
+        supabase.from('result_publications').select('*').eq('school_id', school_id),
       ]);
 
       if (gradesRes.data) setGrades(gradesRes.data);
@@ -406,7 +554,8 @@ export default function AdminDashboard() {
             last_name: 'Teacher',
             email: demoEmail,
             password: 'teacher123',
-            phone: '0123456789'
+            phone: '0123456789',
+            school_id
           }]).then(() => fetchInitialData(true));
         }
       }
@@ -417,15 +566,13 @@ export default function AdminDashboard() {
         if (schoolInfoRes.data.timetable_config) {
           setTimetableConfig(schoolInfoRes.data.timetable_config);
         }
-        if (schoolInfoRes.data.sms_config) {
-          setSchoolInfo(prev => ({ ...prev, sms_config: schoolInfoRes.data.sms_config }));
-        }
       }
       if (timetableRes.data) setTimetableAllocations(timetableRes.data);
       if (studentsRes.data) {
         setAllStudents(studentsRes.data as any);
         setRecentStudents(studentsRes.data.slice(0, 5) as any);
       }
+      if (resPubsRes.data) setResultPublications(resPubsRes.data);
       
       setStats({
         totalStudents: studentsCount.count || 0,
@@ -448,23 +595,24 @@ export default function AdminDashboard() {
       if (!id) {
         // If no ID, we need to insert the first record
         const { error: insertError, data } = await supabase
-          .from('school_info')
-          .insert([{ ...schoolInfo }])
+          .from('schools')
+          .insert([{ ...schoolInfo, school_id }])
           .select()
           .single();
         error = insertError;
         if (data) setSchoolInfo(data);
       } else {
         const { error: updateError } = await supabase
-          .from('school_info')
+          .from('schools')
           .update({ sms_config: schoolInfo.sms_config })
           .eq('id', id);
         error = updateError;
       }
 
       if (error) throw error;
+      lastFailedSMSConfig.current = '';
       showMessage('success', 'SMS configuration saved successfully');
-      fetchSMSBalance();
+      fetchSMSBalance(true);
     } catch (error: any) {
       showMessage('error', error.message);
     } finally {
@@ -499,7 +647,7 @@ export default function AdminDashboard() {
 
       // 3. Delete existing allocations for these sections
       const sectionIds = phaseSections.map(s => s.id);
-      await supabase.from('timetable_allocations').delete().in('section_id', sectionIds);
+      await supabase.from('timetable_allocations').delete().eq('school_id', school_id).in('section_id', sectionIds);
       setGenerationProgress(30);
 
       // 4. Get dynamic periods (excluding breaks)
@@ -544,7 +692,8 @@ export default function AdminDashboard() {
                 subject_id: assignment.subject_id,
                 teacher_id: assignment.teacher_id,
                 day,
-                period
+                period,
+                school_id
               });
               teacherBusy[teacherKey] = true;
               periodsToAssign--;
@@ -638,6 +787,59 @@ export default function AdminDashboard() {
     setTimeout(() => setMessage(null), 3000);
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const adminEmail = localStorage.getItem('userEmail');
+    
+    if (!adminEmail) {
+      showMessage('error', 'Session expired. Please login again.');
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      showMessage('error', 'New passwords do not match');
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 6) {
+      showMessage('error', 'Password must be at least 6 characters long');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      // First verify current password
+      const { data: admin, error: verifyError } = await supabase
+        .from('admins')
+        .select('*')
+        .eq('email', adminEmail)
+        .eq('password', passwordForm.currentPassword)
+        .single();
+
+      if (verifyError || !admin) {
+        showMessage('error', 'Incorrect current password');
+        return;
+      }
+
+      // Update password
+      const { error: updateError } = await supabase
+        .from('admins')
+        .update({ password: passwordForm.newPassword })
+        .eq('email', adminEmail)
+        .eq('school_id', school_id);
+
+      if (updateError) throw updateError;
+
+      showMessage('success', 'Password updated successfully');
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('Password Change Error:', error);
+      showMessage('error', error.message || 'Failed to update password');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
   const askConfirmation = (title: string, message: string, onConfirm: () => void | Promise<void>) => {
     setConfirmModal({ show: true, title, message, onConfirm });
   };
@@ -648,7 +850,7 @@ export default function AdminDashboard() {
       'Delete Grade',
       'Are you sure you want to delete this grade? All associated sections and students will be removed.',
       async () => {
-        const { error } = await supabase.from('grades').delete().eq('id', id);
+        const { error } = await supabase.from('grades').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setGrades(grades.filter(g => g.id !== id));
@@ -661,7 +863,7 @@ export default function AdminDashboard() {
   const handleAddGrade = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGrade) return;
-    const { data, error } = await supabase.from('grades').insert([{ name: newGrade }]).select();
+    const { data, error } = await supabase.from('grades').insert([{ name: newGrade, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
       setGrades([...grades, data[0]]);
@@ -675,7 +877,7 @@ export default function AdminDashboard() {
       'Delete Section',
       'Are you sure you want to delete this section?',
       async () => {
-        const { error } = await supabase.from('sections').delete().eq('id', id);
+        const { error } = await supabase.from('sections').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setSections(sections.filter(s => s.id !== id));
@@ -688,7 +890,7 @@ export default function AdminDashboard() {
   const handleAddSection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSection.grade_id || !newSection.name) return;
-    const { data, error } = await supabase.from('sections').insert([newSection]).select();
+    const { data, error } = await supabase.from('sections').insert([{ ...newSection, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
       // Re-fetch to get teacher names
@@ -702,7 +904,8 @@ export default function AdminDashboard() {
     const { error } = await supabase
       .from('sections')
       .update({ class_teacher_id: teacherId || null })
-      .eq('id', sectionId);
+      .eq('id', sectionId)
+      .eq('school_id', school_id);
     
     if (error) showMessage('error', error.message);
     else {
@@ -717,7 +920,7 @@ export default function AdminDashboard() {
       'Delete Subject',
       'Are you sure you want to delete this subject?',
       async () => {
-        const { error } = await supabase.from('subjects').delete().eq('id', id);
+        const { error } = await supabase.from('subjects').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setSubjects(subjects.filter(s => s.id !== id));
@@ -730,7 +933,7 @@ export default function AdminDashboard() {
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.name || !newSubject.code) return;
-    const { data, error } = await supabase.from('subjects').insert([newSubject]).select();
+    const { data, error } = await supabase.from('subjects').insert([{ ...newSubject, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
       setSubjects([...subjects, data[0]]);
@@ -745,7 +948,7 @@ export default function AdminDashboard() {
       'Delete Teacher',
       'Are you sure you want to delete this teacher?',
       async () => {
-        const { error } = await supabase.from('teachers').delete().eq('id', id);
+        const { error } = await supabase.from('teachers').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setTeachers(teachers.filter(t => t.id !== id));
@@ -780,7 +983,7 @@ export default function AdminDashboard() {
   const handleAddTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTeacher.first_name || !newTeacher.last_name || !newTeacher.email) return;
-    const { data, error } = await supabase.from('teachers').insert([newTeacher]).select();
+    const { data, error } = await supabase.from('teachers').insert([{ ...newTeacher, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
       setTeachers([...teachers, data[0]]);
@@ -803,6 +1006,7 @@ export default function AdminDashboard() {
         password: editingTeacher.password
       })
       .eq('id', editingTeacher.id)
+      .eq('school_id', school_id)
       .select();
 
     if (error) showMessage('error', error.message);
@@ -824,10 +1028,12 @@ export default function AdminDashboard() {
         last_name: editingStudent.last_name,
         student_id: editingStudent.student_id,
         gender: editingStudent.gender,
+        phone: editingStudent.phone,
         section_id: editingStudent.section_id,
         password: editingStudent.password
       })
       .eq('id', editingStudent.id)
+      .eq('school_id', school_id)
       .select(`
         *,
         sections:section_id (
@@ -853,7 +1059,7 @@ export default function AdminDashboard() {
       'Delete Assignment',
       'Are you sure you want to delete this assignment?',
       async () => {
-        const { error } = await supabase.from('class_subjects').delete().eq('id', id);
+        const { error } = await supabase.from('class_subjects').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setClassSubjects(classSubjects.filter(cs => cs.id !== id));
@@ -870,7 +1076,8 @@ export default function AdminDashboard() {
     const { error } = await supabase.from('class_subjects').upsert([{
       section_id: assignment.section_id,
       subject_id: assignment.subject_id,
-      teacher_id: assignment.teacher_id || null
+      teacher_id: assignment.teacher_id || null,
+      school_id
     }], { onConflict: 'section_id,subject_id' });
 
     if (error) showMessage('error', error.message);
@@ -881,28 +1088,50 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 1024 * 1024) { // 1MB limit for base64 storage
+        showMessage('error', 'Logo file size must be less than 1MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setSchoolInfo({ ...schoolInfo, logo: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSaveSchoolInfo = async (e: React.FormEvent) => {
     e.preventDefault();
-    const id = (schoolInfo as any).id;
-    const payload = { ...schoolInfo };
-    if (!id) delete (payload as any).id;
+    setLoading(true);
+    try {
+      const id = (schoolInfo as any).id;
+      const payload = { ...schoolInfo, school_id };
+      if (!id) delete (payload as any).id;
 
-    const { data, error } = await supabase
-      .from('school_info')
-      .upsert([payload])
-      .select()
-      .single();
+      const { data, error } = await supabase
+        .from('schools')
+        .upsert([payload])
+        .select()
+        .single();
 
-    if (error) showMessage('error', error.message);
-    else {
+      if (error) throw error;
+      
       if (data) setSchoolInfo(data);
       showMessage('success', 'School info updated successfully');
       refreshTheme();
+    } catch (error: any) {
+      console.error('Save School Info Error:', error);
+      showMessage('error', error.message || 'Failed to update school information');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSaveAllocation = async (allocation: any) => {
-    const { error } = await supabase.from('timetable_allocations').upsert([allocation]);
+    const { error } = await supabase.from('timetable_allocations').upsert([{ ...allocation, school_id }]);
     if (error) showMessage('error', error.message);
     else {
       fetchInitialData();
@@ -918,7 +1147,8 @@ export default function AdminDashboard() {
         section_id: cs.section_id,
         subject_id: cs.subject_id,
         teacher_id: cs.teacher_id,
-        periods_per_week: cs.periods_per_week || 0
+        periods_per_week: cs.periods_per_week || 0,
+        school_id
       }));
 
       const { error } = await supabase.from('class_subjects').upsert(updates);
@@ -938,7 +1168,7 @@ export default function AdminDashboard() {
       'Delete Task',
       'Are you sure you want to delete this task?',
       async () => {
-        const { error } = await supabase.from('tasks').delete().eq('id', id);
+        const { error } = await supabase.from('tasks').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setTasks(tasks.filter(t => t.id !== id));
@@ -956,6 +1186,7 @@ export default function AdminDashboard() {
         .from('results')
         .select('*, subjects(name), tasks(name, total_marks, weighting)')
         .eq('student_id', student.id)
+        .or(`school_id.eq.${school_id},school_id.is.null`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -974,7 +1205,8 @@ export default function AdminDashboard() {
     
     const { data, error } = await supabase.from('tasks').insert([{
       ...newTask,
-      year: new Date().getFullYear()
+      year: new Date().getFullYear(),
+      school_id
     }]).select();
 
     if (error) showMessage('error', error.message);
@@ -1032,7 +1264,7 @@ export default function AdminDashboard() {
       'Delete Student',
       'Are you sure you want to delete this student?',
       async () => {
-        const { error } = await supabase.from('students').delete().eq('id', id);
+        const { error } = await supabase.from('students').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setAllStudents(allStudents.filter(s => s.id !== id));
@@ -1104,9 +1336,54 @@ export default function AdminDashboard() {
         return;
       }
 
-      const { error } = await supabase.from('students').insert(learners);
+      const learnersWithSchool = learners.map(l => ({ ...l, school_id }));
+      const { error } = await supabase.from('students').insert(learnersWithSchool);
       if (error) showMessage('error', error.message);
       else showMessage('success', `Uploaded ${learners.length} learners`);
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const handleUploadResults = async (file: File, sectionId: string, subjectId: string, taskId: string, term: string, year: number) => {
+    if (!sectionId || !subjectId || !taskId) {
+      showMessage('error', 'Please select section, subject, and task first');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (e: any) => {
+      const data = e.target.result;
+      const workbook = XLSX.read(data, { type: 'binary' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+      const marks = jsonData.map((item: any) => {
+        const studentId = String(item.student_id || item['Acc No'] || item.id || '').trim();
+        const score = Number(item.score || item.Mark || item.Result || 0);
+        
+        // Find student in our current list
+        const student = allStudents.find(s => s.student_id === studentId);
+        
+        return {
+          student_id: student?.id,
+          subject_id: subjectId,
+          task_id: taskId,
+          score: score,
+          term: term,
+          year: year,
+          school_id: school_id
+        };
+      }).filter(m => m.student_id && !isNaN(m.score));
+
+      if (marks.length === 0) {
+        showMessage('error', 'No valid marks found. Ensure "student_id" and "score" columns exist.');
+        return;
+      }
+
+      const { error } = await supabase.from('results').insert(marks);
+      if (error) showMessage('error', error.message);
+      else showMessage('success', `Uploaded ${marks.length} marks`);
     };
     reader.readAsBinaryString(file);
   };
@@ -1219,7 +1496,8 @@ export default function AdminDashboard() {
             name: 'Final Mark',
             total_marks: 100,
             weighting: 100,
-            year: parseInt(resultSelectedYear)
+            year: parseInt(resultSelectedYear),
+            school_id
           }])
           .select();
           
@@ -1260,7 +1538,8 @@ export default function AdminDashboard() {
             task_id: defaultTask!.id,
             score: Number(score),
             term: resultSelectedTerm,
-            year: parseInt(resultSelectedYear)
+            year: parseInt(resultSelectedYear),
+            school_id
           });
         }
       });
@@ -1342,8 +1621,23 @@ export default function AdminDashboard() {
     return { level: 1, label: 'Not Achieved' };
   };
 
+  const getMarkColor = (score: number) => {
+    if (score >= 80) return 'text-amber-500'; // Gold
+    if (score >= 60) return 'text-emerald-600'; // Green
+    if (score >= 40) return 'text-amber-600'; // Amber
+    return 'text-red-600'; // Red
+  };
+
+  const getMarkBg = (score: number) => {
+    if (score >= 80) return 'bg-amber-100 text-amber-700';
+    if (score >= 60) return 'bg-emerald-100 text-emerald-700';
+    if (score >= 40) return 'bg-amber-100 text-amber-700';
+    return 'bg-red-100 text-red-700';
+  };
+
   const getPassMark = (subjectId: string) => {
-    return subjects.find(s => s.id === subjectId)?.pass_mark || 50;
+    const subject = subjects.find(s => s.id === subjectId);
+    return getSubjectPassMark(subject?.name, subject?.pass_mark);
   };
 
   const downloadStats = () => {
@@ -1352,13 +1646,14 @@ export default function AdminDashboard() {
       const avgScore = subjectResults.length > 0 
         ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length 
         : 0;
-      const passCount = subjectResults.filter(r => r.score >= (s.pass_mark || 50)).length;
+      const passMark = getSubjectPassMark(s.name, s.pass_mark);
+      const passCount = subjectResults.filter(r => r.score >= passMark).length;
       const passRate = subjectResults.length > 0 ? (passCount / subjectResults.length) * 100 : 0;
       
       return {
         'Subject Name': s.name,
         'Subject Code': s.code,
-        'Pass Mark': s.pass_mark,
+        'Pass Mark': passMark,
         'Average Score': avgScore.toFixed(2),
         'Pass Rate (%)': passRate.toFixed(2),
         'Total Students': subjectResults.length,
@@ -1427,7 +1722,7 @@ export default function AdminDashboard() {
           const scores = studentSubjects.map(sub => {
             const res = studentResults.find(r => r.subject_id === sub.id);
             const score = res ? res.score : 0;
-            const passMark = PASS_MARKS[sub.name.toLowerCase()] || sub.pass_mark || 50;
+            const passMark = getSubjectPassMark(sub.name, sub.pass_mark);
             if (res) {
               total += score;
               count++;
@@ -1450,7 +1745,7 @@ export default function AdminDashboard() {
       ]);
     } else if (activeTab === 'subjects') {
       tableHeaders = ['Subject Name', 'Code', 'Pass Mark'];
-      tableData = subjects.map(s => [s.name, s.code, s.pass_mark + '%']);
+      tableData = subjects.map(s => [s.name, s.code, getSubjectPassMark(s.name, s.pass_mark) + '%']);
     } else if (activeTab === 'teachers') {
       tableHeaders = ['First Name', 'Last Name', 'Email', 'Phone'];
       tableData = teachers.map(t => [t.first_name, t.last_name, t.email, t.phone || '-']);
@@ -1459,9 +1754,10 @@ export default function AdminDashboard() {
       tableData = subjects.map(s => {
         const subjectResults = statsResults.filter(r => r.subject_id === s.id);
         const avg = subjectResults.length > 0 ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length : 0;
-        const passCount = subjectResults.filter(r => r.score >= (s.pass_mark || 50)).length;
+        const passMark = getSubjectPassMark(s.name, s.pass_mark);
+        const passCount = subjectResults.filter(r => r.score >= passMark).length;
         const passRate = subjectResults.length > 0 ? (passCount / subjectResults.length) * 100 : 0;
-        return [s.name, s.code, s.pass_mark, avg.toFixed(2), passRate.toFixed(2), subjectResults.length];
+        return [s.name, s.code, passMark, avg.toFixed(2), passRate.toFixed(2), subjectResults.length];
       });
     }
 
@@ -1485,9 +1781,22 @@ export default function AdminDashboard() {
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-slate-200 hidden lg:flex flex-col sticky top-0 h-screen">
         <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-2 text-primary-600">
-            <GraduationCap className="w-8 h-8" />
-            <span className="font-bold text-xl tracking-tight text-slate-900">Evergreen</span>
+          <div className="flex items-center gap-3">
+            {schoolInfo.logo ? (
+              <img src={schoolInfo.logo} alt="Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-10 h-10 bg-primary-50 rounded-lg flex items-center justify-center text-primary-600">
+                <GraduationCap className="w-6 h-6" />
+              </div>
+            )}
+            <div className="flex flex-col">
+              <span className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
+                {schoolInfo.name || 'Evergreen'}
+              </span>
+              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
+                Admin Portal {school_id === 1 && '(Default ID)'}
+              </span>
+            </div>
           </div>
         </div>
         
@@ -1695,57 +2004,108 @@ export default function AdminDashboard() {
           </AnimatePresence>
 
           {activeTab === 'overview' && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 {[
                   { label: 'Total Students', value: stats.totalStudents.toLocaleString(), icon: Users, trend: '+12%', color: 'text-blue-600', bg: 'bg-blue-50' },
                   { label: 'Active Courses', value: stats.activeCourses.toLocaleString(), icon: BookOpen, trend: '+5%', color: 'text-primary-600', bg: 'bg-primary-50' },
+                  { label: 'Teachers', value: teachers.length.toLocaleString(), icon: UserCheck, trend: 'Stable', color: 'text-purple-600', bg: 'bg-purple-50' },
+                  { label: 'Sections', value: sections.length.toLocaleString(), icon: Layers, trend: 'New', color: 'text-orange-600', bg: 'bg-orange-50' },
                 ].map((stat, i) => (
-                  <div key={stat.label} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                  <motion.div 
+                    key={stat.label} 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.1 }}
+                    className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all"
+                  >
                     <div className="flex items-center justify-between mb-4">
                       <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color}`}>
                         <stat.icon className="w-6 h-6" />
                       </div>
-                      <span className={`text-xs font-bold px-2 py-1 rounded-lg ${stat.trend.startsWith('+') ? 'bg-primary-50 text-primary-600' : 'bg-red-50 text-red-600'}`}>
+                      <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${stat.trend.startsWith('+') ? 'bg-primary-50 text-primary-600' : 'bg-slate-100 text-slate-500'}`}>
                         {stat.trend}
                       </span>
                     </div>
-                    <p className="text-slate-500 text-sm font-medium">{stat.label}</p>
-                    <p className="text-2xl font-bold text-slate-900 mt-1">{stat.value}</p>
-                  </div>
+                    <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">{stat.label}</p>
+                    <p className="text-3xl font-bold text-slate-900 mt-1">{stat.value}</p>
+                  </motion.div>
                 ))}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8">
-                  <h2 className="text-xl font-bold text-slate-900 mb-6">Quick Actions</h2>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {[
-                      { label: 'Add Grade', tab: 'grades', icon: GraduationCap },
-                      { label: 'Add Subject', tab: 'subjects', icon: BookOpen },
-                      { label: 'Add Teacher', tab: 'teachers', icon: UserPlus },
-                      { label: 'Assign Class', tab: 'assign', icon: Plus },
-                      { label: 'Upload Students', tab: 'learners', icon: Users },
-                      { label: 'Upload Results', tab: 'results', icon: Upload },
-                    ].map((action) => (
-                      <button
-                        key={action.label}
-                        onClick={() => setActiveTab(action.tab as Tab)}
-                        className="p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:border-primary-200 hover:bg-primary-50 transition-all text-center group"
-                      >
-                        <action.icon className="w-8 h-8 text-slate-400 group-hover:text-primary-600 mx-auto mb-3" />
-                        <p className="font-bold text-slate-700 group-hover:text-primary-700 text-sm">{action.label}</p>
-                      </button>
-                    ))}
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.4 }}
+                  className="lg:col-span-2 bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8"
+                >
+                  <div className="flex items-center justify-between mb-8">
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900">Student Distribution</h2>
+                      <p className="text-sm text-slate-500">Number of students per grade</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 bg-primary-500 rounded-full"></div>
+                        <span className="text-xs font-bold text-slate-500">Students</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                  
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={grades.map(g => ({
+                        name: g.name,
+                        students: allStudents.filter(s => s.sections?.grade_id === g.id).length
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis 
+                          dataKey="name" 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }}
+                          dy={10}
+                        />
+                        <YAxis 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tick={{ fill: '#64748b', fontSize: 12, fontWeight: 600 }}
+                        />
+                        <Tooltip 
+                          cursor={{ fill: '#f8fafc' }}
+                          contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Bar 
+                          dataKey="students" 
+                          fill="var(--primary-color)" 
+                          radius={[6, 6, 0, 0]} 
+                          barSize={40}
+                          animationBegin={500}
+                          animationDuration={1500}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </motion.div>
 
-                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8">
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8"
+                >
                   <h2 className="text-xl font-bold text-slate-900 mb-6">Recent Students</h2>
                   <div className="space-y-4">
-                    {recentStudents.map((student: any) => (
-                      <div key={student.id} className="flex items-center gap-4 p-3 hover:bg-slate-50 rounded-2xl transition-colors">
+                    {recentStudents.map((student: any, idx: number) => (
+                      <motion.div 
+                        key={student.id} 
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.6 + (idx * 0.1) }}
+                        className="flex items-center gap-4 p-3 hover:bg-slate-50 rounded-2xl transition-colors"
+                      >
                         <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center font-bold">
                           {student.first_name[0]}{student.last_name[0]}
                         </div>
@@ -1755,14 +2115,126 @@ export default function AdminDashboard() {
                             {student.sections?.grades?.name} - {student.sections?.name}
                           </p>
                         </div>
-                      </div>
+                      </motion.div>
                     ))}
                     {recentStudents.length === 0 && (
                       <p className="text-sm text-slate-400 text-center py-8">No students added yet.</p>
                     )}
                   </div>
-                </div>
+                  
+                  <button 
+                    onClick={() => setActiveTab('learners')}
+                    className="w-full mt-6 py-3 bg-slate-50 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-100 transition-all"
+                  >
+                    View All Students
+                  </button>
+                </motion.div>
               </div>
+
+              {/* Top 5 Students Section */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.6 }}
+                className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8"
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-lg shadow-amber-100">
+                      <Trophy className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900">Top 5 Students</h2>
+                      <p className="text-sm text-slate-500">Highest academic achievers</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-4">
+                    <select 
+                      value={top5Grade}
+                      onChange={(e) => setTop5Grade(e.target.value)}
+                      className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">All Grades</option>
+                      {grades.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                    
+                    <select 
+                      value={top5Subject}
+                      onChange={(e) => setTop5Subject(e.target.value)}
+                      className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">Overall Average</option>
+                      {subjects.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {isLoadingTop5 ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-4">
+                    <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
+                    <p className="text-slate-500 font-medium">Calculating rankings...</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    {top5Results.map((student, i) => (
+                      <motion.div 
+                        key={student.id}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.1 }}
+                        className="relative p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:shadow-lg transition-all group"
+                      >
+                        <div className="absolute -top-3 -left-3 w-8 h-8 bg-white rounded-full border-2 border-amber-400 flex items-center justify-center font-bold text-amber-600 shadow-sm z-10">
+                          {i + 1}
+                        </div>
+                        
+                        <div className="flex flex-col items-center text-center">
+                          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center text-2xl font-bold text-primary-600 mb-4 shadow-sm border border-slate-100">
+                            {student.first_name[0]}{student.last_name[0]}
+                          </div>
+                          <h3 className="font-bold text-slate-900 line-clamp-1">{student.first_name} {student.last_name}</h3>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                            {student.sections?.grades?.name} - {student.sections?.name}
+                          </p>
+                          
+                          <div className="mt-4 w-full p-3 bg-white rounded-2xl border border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Average</p>
+                            <p className={`text-xl font-bold ${getMarkColor(student.average)}`}>
+                              {student.average.toFixed(1)}%
+                            </p>
+                          </div>
+
+                          {student.phone && (
+                            <button 
+                              onClick={() => {
+                                setActiveTab('sms');
+                                // You might want to pre-fill the SMS recipient here
+                              }}
+                              className="mt-4 flex items-center gap-2 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors"
+                            >
+                              <MessageSquare className="w-3 h-3" />
+                              Send SMS
+                            </button>
+                          )}
+                          {!student.phone && (
+                            <p className="mt-4 text-[10px] text-slate-400 italic">No contact number</p>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                    {top5Results.length === 0 && (
+                      <div className="col-span-5 py-12 text-center">
+                        <p className="text-slate-400 italic">No results found for the selected filters.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </motion.div>
             </motion.div>
           )}
 
@@ -2164,6 +2636,13 @@ export default function AdminDashboard() {
                           <td className="py-4 text-right">
                             <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
                               <button 
+                                onClick={() => setSelectedProfileStudent(s)}
+                                className="p-2 text-slate-300 hover:text-primary-600"
+                                title="View Learner Profile"
+                              >
+                                <UserCheck className="w-4 h-4" />
+                              </button>
+                              <button 
                                 onClick={() => setEditingStudent(s)}
                                 className="p-2 text-slate-300 hover:text-primary-600"
                               >
@@ -2242,7 +2721,8 @@ export default function AdminDashboard() {
                       <BarChart
                         data={subjects.map(s => {
                           const subjectResults = statsResults.filter(r => r.subject_id === s.id);
-                          const passCount = subjectResults.filter(r => r.score >= (s.pass_mark || 50)).length;
+                          const passMark = getSubjectPassMark(s.name, s.pass_mark);
+                          const passCount = subjectResults.filter(r => r.score >= passMark).length;
                           const passRate = subjectResults.length > 0 ? (passCount / subjectResults.length) * 100 : 0;
                           return { name: s.name, passRate: parseFloat(passRate.toFixed(1)) };
                         })}
@@ -2319,7 +2799,8 @@ export default function AdminDashboard() {
                       const avgScore = subjectResults.length > 0 
                         ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length 
                         : 0;
-                      const passCount = subjectResults.filter(r => r.score >= (s.pass_mark || 50)).length;
+                      const passMark = getSubjectPassMark(s.name, s.pass_mark);
+                      const passCount = subjectResults.filter(r => r.score >= passMark).length;
                       const passRate = subjectResults.length > 0 ? (passCount / subjectResults.length) * 100 : 0;
                       
                       return (
@@ -2330,7 +2811,7 @@ export default function AdminDashboard() {
                           </td>
                           <td className="px-8 py-4 text-center font-medium text-slate-600">{subjectResults.length}</td>
                           <td className="px-8 py-4 text-center">
-                            <span className={`font-bold ${avgScore >= (s.pass_mark || 50) ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <span className={`font-bold ${getMarkColor(avgScore)}`}>
                               {avgScore.toFixed(1)}%
                             </span>
                           </td>
@@ -2345,7 +2826,7 @@ export default function AdminDashboard() {
                               </div>
                             </div>
                           </td>
-                          <td className="px-8 py-4 text-center font-bold text-slate-400">{s.pass_mark}%</td>
+                          <td className="px-8 py-4 text-center font-bold text-slate-400">{passMark}%</td>
                         </tr>
                       );
                     })}
@@ -2463,7 +2944,7 @@ export default function AdminDashboard() {
                           </td>
                           <td className="px-8 py-4 text-center font-bold text-slate-900">{classStudents.length}</td>
                           <td className="px-8 py-4 text-center">
-                            <span className={`font-bold ${avgScore >= 50 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <span className={`font-bold ${getMarkColor(avgScore)}`}>
                               {avgScore > 0 ? `${avgScore.toFixed(1)}%` : 'N/A'}
                             </span>
                           </td>
@@ -2698,6 +3179,49 @@ export default function AdminDashboard() {
                       );
                     })}
                   </select>
+                  <div className="flex items-center gap-4 px-6 py-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                    <span className="text-sm font-bold text-slate-600">Publish Results:</span>
+                    <button
+                      onClick={() => {
+                        const isPublished = resultPublications.some(p => 
+                          p.term === resultSelectedTerm && 
+                          p.year === parseInt(resultSelectedYear) && 
+                          p.is_published
+                        );
+                        toggleResultPublication(resultSelectedTerm, parseInt(resultSelectedYear), isPublished);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+                        resultPublications.some(p => 
+                          p.term === resultSelectedTerm && 
+                          p.year === parseInt(resultSelectedYear) && 
+                          p.is_published
+                        ) ? 'bg-primary-600' : 'bg-slate-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          resultPublications.some(p => 
+                            p.term === resultSelectedTerm && 
+                            p.year === parseInt(resultSelectedYear) && 
+                            p.is_published
+                          ) ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className={`text-xs font-bold ${
+                      resultPublications.some(p => 
+                        p.term === resultSelectedTerm && 
+                        p.year === parseInt(resultSelectedYear) && 
+                        p.is_published
+                      ) ? 'text-primary-600' : 'text-slate-400'
+                    }`}>
+                      {resultPublications.some(p => 
+                        p.term === resultSelectedTerm && 
+                        p.year === parseInt(resultSelectedYear) && 
+                        p.is_published
+                      ) ? 'Published' : 'Hidden from Learners'}
+                    </span>
+                  </div>
                   <div className="relative">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
@@ -2762,7 +3286,7 @@ export default function AdminDashboard() {
                                 <td key={t.id} className="py-4 text-center">
                                   <span className={`text-sm font-bold ${
                                     result 
-                                      ? isPass ? 'text-emerald-600' : 'text-red-600'
+                                      ? getMarkColor(percentage)
                                       : 'text-slate-300 italic'
                                   }`}>
                                     {result ? result.score : '-'}
@@ -2781,9 +3305,7 @@ export default function AdminDashboard() {
                                 
                                 return (
                                   <div className="flex flex-col items-center">
-                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                                      avgScore >= getPassMark(resultSelectedSubject) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                                    }`}>
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${getMarkBg(avgScore)}`}>
                                       Level {levelInfo.level}
                                     </span>
                                     <span className="text-[8px] text-slate-400 uppercase mt-0.5">{levelInfo.label}</span>
@@ -2823,6 +3345,21 @@ export default function AdminDashboard() {
                     <p className="text-sm text-slate-500 mt-1">View and print academic schedules for grades and sections</p>
                   </div>
                   <div className="flex items-center gap-3">
+                    {scheduleSelectedTerm && scheduleSelectedYear && (
+                      <button 
+                        onClick={() => toggleResultPublication(scheduleSelectedTerm, parseInt(scheduleSelectedYear), resultPublications.find(p => p.term === scheduleSelectedTerm && p.year === parseInt(scheduleSelectedYear))?.is_published)}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
+                          resultPublications.find(p => p.term === scheduleSelectedTerm && p.year === parseInt(scheduleSelectedYear))?.is_published
+                            ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                            : 'bg-primary-600 text-white hover:bg-primary-700'
+                        }`}
+                      >
+                        {resultPublications.find(p => p.term === scheduleSelectedTerm && p.year === parseInt(scheduleSelectedYear))?.is_published
+                          ? <><Lock className="w-4 h-4" /> Unpublish Results</>
+                          : <><CheckCircle2 className="w-4 h-4" /> Publish Results</>
+                        }
+                      </button>
+                    )}
                     <button 
                       onClick={() => window.print()}
                       className="flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
@@ -2836,8 +3373,13 @@ export default function AdminDashboard() {
                   <select
                     value={scheduleSelectedGrade}
                     onChange={(e) => {
-                      setScheduleSelectedGrade(e.target.value);
-                      setScheduleSelectedSections([]); // Reset sections when grade changes
+                      const gradeId = e.target.value;
+                      setScheduleSelectedGrade(gradeId);
+                      // Automatically select all sections for the chosen grade
+                      const gradeSections = sections
+                        .filter(s => s.grade_id === gradeId)
+                        .map(s => s.id);
+                      setScheduleSelectedSections(gradeSections);
                     }}
                     className="w-full px-6 py-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500"
                   >
@@ -2906,7 +3448,7 @@ export default function AdminDashboard() {
                           .map(s => (
                             <th key={s.id} className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-wider min-w-[120px]">
                               {s.name}
-                              <p className="text-[10px] font-normal lowercase opacity-60">Pass: {PASS_MARKS[s.name.toLowerCase()] || s.pass_mark || 50}%</p>
+                              <p className="text-[10px] font-normal lowercase opacity-60">Pass: {getSubjectPassMark(s.name, s.pass_mark)}%</p>
                             </th>
                           ))
                         }
@@ -2938,7 +3480,7 @@ export default function AdminDashboard() {
                               </td>
                               {studentSubjects.map(subject => {
                                 const result = studentResults.find(r => r.subject_id === subject.id);
-                                const passMark = PASS_MARKS[subject.name.toLowerCase()] || subject.pass_mark || 50;
+                                const passMark = getSubjectPassMark(subject.name, subject.pass_mark);
                                 const score = result ? result.score : 0;
                                 const isPass = score >= passMark;
                                 
@@ -2956,7 +3498,7 @@ export default function AdminDashboard() {
                                     <div className="flex flex-col items-center">
                                       <span className={`text-sm font-bold ${
                                         result 
-                                          ? isPass ? 'text-emerald-600' : 'text-red-600'
+                                          ? getMarkColor(score)
                                           : 'text-slate-300 italic'
                                       }`}>
                                         {result ? score : '-'}
@@ -3227,8 +3769,74 @@ export default function AdminDashboard() {
 
           {activeTab === 'system-settings' && (
             <div className="p-8 bg-white rounded-[2.5rem] border border-slate-200 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900 mb-6">System Settings</h2>
-              <p className="text-slate-500 italic">Security and system-wide configurations will be available here.</p>
+              <div className="flex items-center gap-4 mb-8">
+                <div className="p-3 bg-primary-50 rounded-2xl">
+                  <ShieldCheck className="w-6 h-6 text-primary-600" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">System Settings</h2>
+                  <p className="text-sm text-slate-500">Security and system-wide configurations</p>
+                </div>
+              </div>
+
+              <div className="max-w-md">
+                <div className="bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                  <div className="flex items-center gap-3 mb-6">
+                    <Lock className="w-5 h-5 text-primary-600" />
+                    <h3 className="font-bold text-slate-900">Change Admin Password</h3>
+                  </div>
+                  
+                  <form onSubmit={handleChangePassword} className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700">Current Password</label>
+                      <input 
+                        type="password" 
+                        required
+                        value={passwordForm.currentPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                        placeholder="••••••••" 
+                        className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500" 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700">New Password</label>
+                      <input 
+                        type="password" 
+                        required
+                        value={passwordForm.newPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                        placeholder="••••••••" 
+                        className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500" 
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-700">Confirm New Password</label>
+                      <input 
+                        type="password" 
+                        required
+                        value={passwordForm.confirmPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                        placeholder="••••••••" 
+                        className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500" 
+                      />
+                    </div>
+                    <button 
+                      type="submit"
+                      disabled={isChangingPassword}
+                      className="w-full bg-primary-600 text-white py-4 rounded-2xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isChangingPassword ? (
+                        <>
+                          <RefreshCw className="w-5 h-5 animate-spin" />
+                          Updating...
+                        </>
+                      ) : (
+                        'Update Password'
+                      )}
+                    </button>
+                  </form>
+                </div>
+              </div>
             </div>
           )}
 
@@ -3255,14 +3863,47 @@ export default function AdminDashboard() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">Logo URL</label>
-                    <input 
-                      type="text" 
-                      value={schoolInfo.logo || ''}
-                      onChange={(e) => setSchoolInfo({ ...schoolInfo, logo: e.target.value })}
-                      placeholder="https://example.com/logo.png" 
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500" 
-                    />
+                    <label className="text-sm font-bold text-slate-700">School Logo</label>
+                    <div className="flex items-center gap-4">
+                      {schoolInfo.logo ? (
+                        <div className="relative group">
+                          <img 
+                            src={schoolInfo.logo} 
+                            alt="Logo" 
+                            className="w-20 h-20 rounded-2xl object-contain bg-slate-50 border border-slate-100" 
+                            referrerPolicy="no-referrer"
+                          />
+                          <button 
+                            type="button"
+                            onClick={() => setSchoolInfo({ ...schoolInfo, logo: '' })}
+                            className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-20 h-20 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400">
+                          <ImageIcon className="w-8 h-8" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={handleLogoUpload}
+                          className="hidden" 
+                          id="logo-upload"
+                        />
+                        <label 
+                          htmlFor="logo-upload"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                        >
+                          <Download className="w-4 h-4" />
+                          {schoolInfo.logo ? 'Change Logo' : 'Upload Logo'}
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-2">Recommended: Square image, max 1MB</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -3453,7 +4094,8 @@ export default function AdminDashboard() {
                                       section_id: cs.section_id,
                                       subject_id: cs.subject_id,
                                       teacher_id: cs.teacher_id,
-                                      periods_per_week: cs.periods_per_week || 0
+                                      periods_per_week: cs.periods_per_week || 0,
+                                      school_id
                                     }]);
                                     if (error) throw error;
                                     showMessage('success', 'Allocation saved');
@@ -3535,7 +4177,7 @@ export default function AdminDashboard() {
                                 return getGradePhase(gradeName) === selectedPhase;
                               });
                               const sectionIds = phaseSections.map(s => s.id);
-                              await supabase.from('timetable_allocations').delete().in('section_id', sectionIds);
+                              await supabase.from('timetable_allocations').delete().eq('school_id', school_id).in('section_id', sectionIds);
                               showMessage('success', 'Timetable cleared');
                               fetchInitialData();
                             } catch (error: any) {
@@ -3591,15 +4233,15 @@ export default function AdminDashboard() {
 
                               if (!id) {
                                 const { error: insertError, data } = await supabase
-                                  .from('school_info')
-                                  .insert([{ ...schoolInfo, timetable_config: timetableConfig }])
+                                  .from('schools')
+                                  .insert([{ ...schoolInfo, timetable_config: timetableConfig, id: school_id }])
                                   .select()
                                   .single();
                                 error = insertError;
                                 if (data) setSchoolInfo(data);
                               } else {
                                 const { error: updateError } = await supabase
-                                  .from('school_info')
+                                  .from('schools')
                                   .update({ timetable_config: timetableConfig })
                                   .eq('id', id);
                                 error = updateError;
@@ -4243,23 +4885,35 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase ml-2">Class (Section)</label>
-                      <select
-                        value={editingStudent.section_id || ''}
-                        onChange={(e) => setEditingStudent({ ...editingStudent, section_id: e.target.value })}
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500"
-                      >
-                        <option value="">Select Class</option>
-                        {sections.map(s => {
-                          const grade = grades.find(g => g.id === s.grade_id);
-                          return (
-                            <option key={s.id} value={s.id}>
-                              {grade?.name} - {s.name}
-                            </option>
-                          );
-                        })}
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-2">Class (Section)</label>
+                        <select
+                          value={editingStudent.section_id || ''}
+                          onChange={(e) => setEditingStudent({ ...editingStudent, section_id: e.target.value })}
+                          className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500"
+                        >
+                          <option value="">Select Class</option>
+                          {sections.map(s => {
+                            const grade = grades.find(g => g.id === s.grade_id);
+                            return (
+                              <option key={s.id} value={s.id}>
+                                {grade?.name} - {s.name}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-2">Contact Number</label>
+                        <input
+                          type="text"
+                          value={editingStudent.phone || ''}
+                          onChange={(e) => setEditingStudent({ ...editingStudent, phone: e.target.value })}
+                          placeholder="e.g. 0712345678"
+                          className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
                     </div>
                     
                     <div className="space-y-2">
@@ -4324,6 +4978,15 @@ export default function AdminDashboard() {
                   </div>
                 </motion.div>
               </div>
+            )}
+            {selectedProfileStudent && (
+              <LearnerProfile 
+                student={selectedProfileStudent}
+                results={allResults}
+                subjects={subjects}
+                schoolInfo={schoolInfo}
+                onClose={() => setSelectedProfileStudent(null)}
+              />
             )}
           </AnimatePresence>
         </div>

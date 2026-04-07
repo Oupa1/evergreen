@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'student' | 'teacher' | 'admin'>('student');
+  const [role, setRole] = useState<'student' | 'teacher' | 'admin' | 'super_admin'>('student');
   const [demoStudent, setDemoStudent] = useState<{ id: string; pass: string } | null>(null);
   const [demoTeacher, setDemoTeacher] = useState<{ email: string; pass: string } | null>(null);
   const navigate = useNavigate();
@@ -42,7 +42,23 @@ export default function Login() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (role === 'admin') {
+    if (role === 'super_admin') {
+      const { data, error } = await supabase
+        .from('super_admins')
+        .select('*')
+        .eq('email', email)
+        .eq('password', password)
+        .single();
+
+      if (error || !data) {
+        alert('Invalid super admin credentials.');
+        return;
+      }
+
+      localStorage.setItem('userRole', 'super_admin');
+      localStorage.setItem('userEmail', email);
+      navigate('/super-admin');
+    } else if (role === 'admin') {
       const { data, error } = await supabase
         .from('admins')
         .select('*')
@@ -57,6 +73,7 @@ export default function Login() {
 
       localStorage.setItem('userRole', 'admin');
       localStorage.setItem('userEmail', email);
+      localStorage.setItem('school_id', (data.school_id || 1).toString());
       navigate('/admin');
     } else if (role === 'teacher') {
       const { data, error } = await supabase
@@ -74,12 +91,13 @@ export default function Login() {
       localStorage.setItem('userRole', 'teacher');
       localStorage.setItem('userEmail', email);
       localStorage.setItem('teacherId', data.id);
+      localStorage.setItem('school_id', (data.school_id || 1).toString());
       navigate('/teacher');
     } else {
       // For student, check if student exists in DB by email OR student_id AND check password
       const { data, error } = await supabase
         .from('students')
-        .select('id, password')
+        .select('id, password, school_id')
         .or(`email.eq.${email},student_id.eq.${email}`)
         .single();
 
@@ -95,6 +113,7 @@ export default function Login() {
 
       localStorage.setItem('userRole', 'student');
       localStorage.setItem('studentId', data.id);
+      localStorage.setItem('school_id', (data.school_id || 1).toString());
       navigate('/student');
     }
   };
@@ -103,6 +122,12 @@ export default function Login() {
     setRole('admin');
     setEmail('admin@evergreen.edu');
     setPassword('admin123');
+  };
+
+  const fillSuperAdminCredentials = () => {
+    setRole('super_admin');
+    setEmail('superadmin@system.edu');
+    setPassword('superadmin123');
   };
 
   const fillStudentCredentials = () => {
@@ -148,6 +173,18 @@ export default function Login() {
                 }`}
               >
                 Demo Admin
+              </button>
+
+              <button 
+                type="button"
+                onClick={fillSuperAdminCredentials}
+                className={`text-[10px] font-bold px-3 py-1.5 rounded-full transition-all active:scale-95 border ${
+                  role === 'super_admin' 
+                    ? 'bg-primary-600 text-white border-primary-600 shadow-md' 
+                    : 'bg-primary-50 text-primary-600 border-primary-100 hover:bg-primary-100'
+                }`}
+              >
+                Demo Super Admin
               </button>
               
               {demoTeacher && (
@@ -205,6 +242,14 @@ export default function Login() {
               }`}
             >
               Admin
+            </button>
+            <button
+              onClick={() => setRole('super_admin')}
+              className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
+                role === 'super_admin' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Super Admin
             </button>
           </div>
 

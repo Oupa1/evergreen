@@ -1,8 +1,10 @@
 import { motion } from 'motion/react';
 import { Mail, Phone, MapPin, Clock, Send } from 'lucide-react';
 import React, { useState } from 'react';
+import { useSchool } from '../hooks/useSchool';
 
 export default function Contact() {
+  const { school } = useSchool();
   const [formState, setFormState] = useState({ name: '', email: '', subject: '', message: '' });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -48,7 +50,7 @@ export default function Contact() {
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-slate-900 mb-1">Email Address</h3>
-                    <p className="text-slate-600">info@evergreen.edu</p>
+                    <p className="text-slate-600">{school?.domain ? `info@${school.domain}` : 'info@evergreen.edu'}</p>
                   </div>
                 </div>
                 <div className="flex gap-6">

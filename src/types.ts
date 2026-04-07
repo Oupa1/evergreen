@@ -1,6 +1,7 @@
 export interface Grade {
   id: string;
   name: string;
+  school_id: number;
   created_at?: string;
 }
 
@@ -11,6 +12,7 @@ export interface Teacher {
   email: string;
   phone?: string;
   password?: string;
+  school_id: number;
   created_at?: string;
 }
 
@@ -20,6 +22,7 @@ export interface Section {
   name: string;
   class_teacher_id?: string;
   teachers?: Teacher;
+  school_id: number;
   created_at?: string;
 }
 
@@ -28,6 +31,7 @@ export interface Subject {
   name: string;
   code: string;
   pass_mark?: number;
+  school_id: number;
   created_at?: string;
 }
 
@@ -37,6 +41,7 @@ export interface ClassSubject {
   subject_id: string;
   teacher_id?: string;
   periods_per_week?: number;
+  school_id: number;
   created_at?: string;
 }
 
@@ -61,6 +66,7 @@ export interface SchoolInfo {
     username: string;
     password: string;
   };
+  school_id: number;
   created_at?: string;
 }
 
@@ -74,6 +80,7 @@ export interface Student {
   phone?: string;
   student_id: string;
   password?: string;
+  school_id: number;
   sections?: {
     name: string;
     grade_id: string;
@@ -92,6 +99,7 @@ export interface Result {
   score: number;
   term: string;
   year: number;
+  school_id: number;
   created_at?: string;
 }
 
@@ -105,5 +113,42 @@ export interface Task {
   weighting: number;
   term: string;
   year: number;
+  school_id: number;
+  type?: 'Task' | 'Quiz' | 'Puzzle';
+  questions?: any[];
   created_at?: string;
+  subjects?: Subject;
+}
+
+export interface School {
+  id: number;
+  name: string;
+  domain?: string;
+  logo_url?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  created_at?: string;
+}
+
+export interface AssessmentTemplate {
+  id: number;
+  name: string;
+  grade_level: string;
+  term: string;
+  created_at?: string;
+}
+
+export interface TemplateSubject {
+  id: number;
+  template_id: number;
+  subject_name: string;
+  subject_code?: string;
+}
+
+export interface TemplateTask {
+  id: number;
+  subject_id: number;
+  task_name: string;
+  max_marks: number;
+  weighting: number;
 }

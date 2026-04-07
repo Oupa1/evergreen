@@ -14,9 +14,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const fetchTheme = async () => {
     try {
+      const school_id = localStorage.getItem('school_id') || '1';
       const { data, error } = await supabase
-        .from('school_info')
+        .from('schools')
         .select('id, name, logo, mission, vision, contact, type, level, primary_color, secondary_color')
+        .eq('school_id', parseInt(school_id))
         .single();
       
       if (data) {

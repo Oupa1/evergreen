@@ -1,7 +1,9 @@
 import { motion } from 'motion/react';
 import { Target, Shield, Eye, Award, Users } from 'lucide-react';
+import { useSchool } from '../hooks/useSchool';
 
 export default function About() {
+  const { school } = useSchool();
   return (
     <main className="pt-20">
       {/* Hero Section */}
@@ -19,7 +21,7 @@ export default function About() {
             animate={{ opacity: 1, y: 0 }}
             className="text-5xl md:text-7xl font-bold text-white mb-4"
           >
-            About Our School
+            About {school?.name || 'Our School'}
           </motion.h1>
           <p className="text-xl text-slate-200 max-w-2xl mx-auto">
             A legacy of excellence and a future of innovation.

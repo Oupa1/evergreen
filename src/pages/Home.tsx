@@ -3,6 +3,7 @@ import FeatureCard from '../components/FeatureCard';
 import { BookOpen, Users, Trophy, Globe, Zap, Heart } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
+import { useSchool } from '../hooks/useSchool';
 
 const features = [
   {
@@ -59,6 +60,7 @@ const news = [
 ];
 
 export default function Home() {
+  const { school } = useSchool();
   return (
     <main>
       <Hero />
@@ -113,7 +115,7 @@ export default function Home() {
           <div className="flex flex-col md:flex-row justify-between items-end mb-12 gap-6">
             <div className="max-w-2xl">
               <h2 className="text-sm font-bold text-primary-600 uppercase tracking-widest mb-4">Latest News</h2>
-              <p className="text-4xl font-bold text-slate-900">Stay Updated with Evergreen Academy</p>
+              <p className="text-4xl font-bold text-slate-900">Stay Updated with {school?.name || 'Evergreen Academy'}</p>
             </div>
             <button className="text-primary-600 font-bold flex items-center gap-2 hover:gap-3 transition-all">
               View All News <BookOpen className="w-5 h-5" />

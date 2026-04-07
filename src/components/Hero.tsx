@@ -1,8 +1,10 @@
 import { motion } from 'motion/react';
 import { ArrowRight, Play } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useSchool } from '../hooks/useSchool';
 
 export default function Hero() {
+  const { school } = useSchool();
   return (
     <section className="relative min-h-screen flex items-center pt-20 overflow-hidden">
       {/* Background Image with Overlay */}
@@ -31,7 +33,7 @@ export default function Hero() {
               <span className="text-primary-500 italic font-serif">Inspiring Futures.</span>
             </h1>
             <p className="text-xl text-slate-300 mb-10 leading-relaxed">
-              At Evergreen Academy, we provide a world-class education that combines academic rigor with character development and creative exploration.
+              At {school?.name || 'Evergreen Academy'}, we provide a world-class education that combines academic rigor with character development and creative exploration.
             </p>
 
             <div className="flex flex-wrap gap-4">

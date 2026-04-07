@@ -3,6 +3,7 @@ import { GraduationCap, Menu, X } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { useSchool } from '../hooks/useSchool';
 
 const navLinks = [
   { name: 'Home', href: '/' },
@@ -13,6 +14,7 @@ const navLinks = [
 ];
 
 export default function Navbar() {
+  const { school } = useSchool();
   const [isOpen, setIsOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
@@ -35,13 +37,17 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 group">
           <div className="bg-primary-600 p-2 rounded-lg group-hover:bg-primary-700 transition-colors">
-            <GraduationCap className="w-6 h-6 text-white" />
+            {school?.logo_url ? (
+              <img src={school.logo_url} alt={school.name} className="w-6 h-6 object-contain" />
+            ) : (
+              <GraduationCap className="w-6 h-6 text-white" />
+            )}
           </div>
           <span className={cn(
             "font-bold text-xl tracking-tight transition-colors",
             scrolled ? "text-slate-900" : "text-white"
           )}>
-            Evergreen Academy
+            {school?.name || 'Evergreen Academy'}
           </span>
         </Link>
 
