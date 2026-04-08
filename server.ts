@@ -89,6 +89,9 @@ async function startServer() {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+      define: {
+        'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || ''),
+      },
     });
     app.use(vite.middlewares);
   } else {
