@@ -153,68 +153,66 @@ export default function AdminDashboard() {
   const [top5Subject, setTop5Subject] = useState<string>(''); // empty means overall
   const [top5Results, setTop5Results] = useState<any[]>([]);
   const [isLoadingTop5, setIsLoadingTop5] = useState(false);
+  const [studentsLoading, setStudentsLoading] = useState(true);
+  const [top5Term, setTop5Term] = useState('Term 1');
+  const [top5Year, setTop5Year] = useState(new Date().getFullYear().toString());
 
   useEffect(() => {
     if (activeTab === 'overview') {
       fetchTop5Data();
     }
-  }, [activeTab, top5Grade, top5Subject]);
+  }, [activeTab, top5Grade, top5Subject, top5Term, top5Year]);
 
   const fetchTop5Data = async () => {
     setIsLoadingTop5(true);
     try {
-      let query = supabase
+      // Step 1: Fetch only student_id + score (no joins) — much faster
+      let scoresQuery = supabase
         .from('results')
-        .select(`
-          *,
-          students:student_id (
-            id,
-            first_name,
-            last_name,
-            student_id,
-            phone,
-            section_id,
-            sections:section_id (
-              name,
-              grade_id,
-              grades:grade_id (
-                name
-              )
-            )
-          )
-        `)
-        .eq('school_id', school_id);
+        .select('student_id, score, subject_id')
+        .eq('school_id', school_id)
+        .eq('term', top5Term)
+        .eq('year', parseInt(top5Year));
 
-      if (top5Subject) {
-        query = query.eq('subject_id', top5Subject);
-      }
+      if (top5Subject) scoresQuery = scoresQuery.eq('subject_id', top5Subject);
 
-      const { data, error } = await query;
-      if (error) throw error;
+      const { data: scoresData, error: scoresError } = await scoresQuery;
+      if (scoresError) throw scoresError;
 
-      // Group by student and calculate average
-      const studentMap: { [key: string]: any } = {};
-      data?.forEach(r => {
-        if (!r.students) return;
-        
-        // Filter by grade if selected
-        if (top5Grade && r.students.sections?.grade_id !== top5Grade) return;
-
-        if (!studentMap[r.student_id]) {
-          studentMap[r.student_id] = {
-            ...r.students,
-            totalScore: 0,
-            count: 0
-          };
-        }
-        studentMap[r.student_id].totalScore += r.score;
-        studentMap[r.student_id].count += 1;
+      // Step 2: Aggregate scores per student in JS
+      const scoreMap: { [key: string]: { total: number; count: number } } = {};
+      scoresData?.forEach(r => {
+        if (!scoreMap[r.student_id]) scoreMap[r.student_id] = { total: 0, count: 0 };
+        scoreMap[r.student_id].total += r.score;
+        scoreMap[r.student_id].count += 1;
       });
 
-      const processed = Object.values(studentMap).map(s => ({
-        ...s,
-        average: s.totalScore / s.count
-      })).sort((a, b) => b.average - a.average).slice(0, 5);
+      // Get top 5 student IDs sorted by average
+      let topEntries = Object.entries(scoreMap)
+        .map(([id, s]) => ({ id, average: s.total / s.count }))
+        .sort((a, b) => b.average - a.average);
+
+      // Step 3: Fetch only the top ~20 student details (to allow grade filtering)
+      const topIds = topEntries.slice(0, 20).map(e => e.id);
+      if (topIds.length === 0) { setTop5Results([]); return; }
+
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('id, first_name, last_name, student_id, phone, section_id, sections:section_id(name, grade_id, grades:grade_id(name))')
+        .in('id', topIds);
+
+      const studentLookup: { [key: string]: any } = {};
+      studentsData?.forEach(s => { studentLookup[s.id] = s; });
+
+      const processed = topEntries
+        .map(e => {
+          const s = studentLookup[e.id];
+          if (!s) return null;
+          if (top5Grade && (s as any).sections?.grade_id !== top5Grade) return null;
+          return { ...s, average: e.average };
+        })
+        .filter(Boolean)
+        .slice(0, 5);
 
       setTop5Results(processed);
     } catch (error) {
@@ -403,7 +401,7 @@ export default function AdminDashboard() {
       interval = setInterval(() => {
         fetchInitialData(true);
         setLastRefreshed(new Date());
-      }, 5000); // 5 seconds
+      }, 30000); // 30 seconds
     }
     return () => clearInterval(interval);
   }, [autoRefresh]);
@@ -526,16 +524,13 @@ export default function AdminDashboard() {
   async function fetchInitialData(silent = false) {
     if (!silent) setLoading(true);
     try {
-      const [gradesRes, sectionsRes, subjectsRes, teachersRes, studentsRes, tasksRes, classSubjectsRes, schoolInfoRes, timetableRes, studentsCount, subjectsCount, resPubsRes] = await Promise.all([
+      // Phase 1: Critical lightweight data — shows the dashboard immediately
+      const [gradesRes, sectionsRes, subjectsRes, teachersRes, schoolInfoRes, studentsCount, subjectsCount, resPubsRes] = await Promise.all([
         supabase.from('grades').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
         supabase.from('sections').select('*, teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
         supabase.from('subjects').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('name'),
         supabase.from('teachers').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('first_name'),
-        supabase.from('students').select('*, sections(name, grade_id, grades(name))').or(`school_id.eq.${school_id},school_id.is.null`).order('last_name'),
-        supabase.from('tasks').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('created_at', { ascending: false }),
-        supabase.from('class_subjects').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
         supabase.from('schools').select('*').eq('school_id', school_id).single(),
-        supabase.from('timetable_allocations').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
         supabase.from('students').select('*', { count: 'exact', head: true }).or(`school_id.eq.${school_id},school_id.is.null`),
         supabase.from('subjects').select('*', { count: 'exact', head: true }).or(`school_id.eq.${school_id},school_id.is.null`),
         supabase.from('result_publications').select('*').eq('school_id', school_id),
@@ -548,7 +543,7 @@ export default function AdminDashboard() {
         setTeachers(teachersRes.data);
         // Seed demo teacher if not exists
         const demoEmail = 'ag@gmail.com';
-        if (!teachersRes.data.some(t => t.email === demoEmail)) {
+        if (!teachersRes.data.some((t: any) => t.email === demoEmail)) {
           supabase.from('teachers').insert([{
             first_name: 'Demo',
             last_name: 'Teacher',
@@ -556,33 +551,54 @@ export default function AdminDashboard() {
             password: 'teacher123',
             phone: '0123456789',
             school_id
-          }]).then(() => fetchInitialData(true));
+          }]);
         }
       }
-      if (tasksRes.data) setTasks(tasksRes.data);
-      if (classSubjectsRes.data) setClassSubjects(classSubjectsRes.data);
       if (schoolInfoRes.data) {
         setSchoolInfo(schoolInfoRes.data);
         if (schoolInfoRes.data.timetable_config) {
           setTimetableConfig(schoolInfoRes.data.timetable_config);
         }
       }
-      if (timetableRes.data) setTimetableAllocations(timetableRes.data);
-      if (studentsRes.data) {
-        setAllStudents(studentsRes.data as any);
-        setRecentStudents(studentsRes.data.slice(0, 5) as any);
-      }
       if (resPubsRes.data) setResultPublications(resPubsRes.data);
-      
       setStats({
         totalStudents: studentsCount.count || 0,
         activeCourses: subjectsCount.count || 0
       });
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Error fetching critical data:', error);
     } finally {
       setLoading(false);
       setLastRefreshed(new Date());
+    }
+
+    // Phase 2: Heavy data loaded in background — no spinner, populates when ready
+    if (!silent) {
+      fetchSecondaryData();
+    }
+  }
+
+  async function fetchSecondaryData() {
+    try {
+      setStudentsLoading(true);
+      const [studentsRes, tasksRes, classSubjectsRes, timetableRes] = await Promise.all([
+        supabase.from('students').select('*, sections(name, grade_id, grades(name))').or(`school_id.eq.${school_id},school_id.is.null`).order('last_name'),
+        supabase.from('tasks').select('*').or(`school_id.eq.${school_id},school_id.is.null`).order('created_at', { ascending: false }),
+        supabase.from('class_subjects').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
+        supabase.from('timetable_allocations').select('*, sections(name, grade_id), subjects(name), teachers(first_name, last_name)').or(`school_id.eq.${school_id},school_id.is.null`),
+      ]);
+
+      if (studentsRes.data) {
+        setAllStudents(studentsRes.data as any);
+        setRecentStudents(studentsRes.data.slice(0, 5) as any);
+      }
+      if (tasksRes.data) setTasks(tasksRes.data);
+      if (classSubjectsRes.data) setClassSubjects(classSubjectsRes.data);
+      if (timetableRes.data) setTimetableAllocations(timetableRes.data);
+    } catch (error) {
+      console.error('Error fetching secondary data:', error);
+    } finally {
+      setStudentsLoading(false);
     }
   }
 
