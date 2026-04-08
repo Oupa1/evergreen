@@ -39,7 +39,7 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "--loader", "tsx/esm", "server.ts"]
+run = ["npm", "start"]
 build = ["npm", "run", "build"]
 
 [userenv]
