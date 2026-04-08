@@ -352,7 +352,7 @@ export default function StudentDashboard() {
         // Fetch results for this student
         const { data: resultsData } = await supabase
           .from('results')
-          .select('*, subjects(name, code, pass_mark), tasks(name, total_marks)')
+          .select('*, subjects(name, code), tasks(name, total_marks)')
           .eq('student_id', studentData.id)
           .eq('school_id', school_id);
         

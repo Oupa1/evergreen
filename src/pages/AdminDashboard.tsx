@@ -933,7 +933,7 @@ export default function AdminDashboard() {
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubject.name || !newSubject.code) return;
-    const { data, error } = await supabase.from('subjects').insert([{ ...newSubject, school_id }]).select();
+    const { data, error } = await supabase.from('subjects').insert([{ name: newSubject.name, code: newSubject.code, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
       setSubjects([...subjects, data[0]]);
