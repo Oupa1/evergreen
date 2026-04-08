@@ -41,3 +41,9 @@ externalPort = 80
 deploymentTarget = "autoscale"
 run = ["node", "--loader", "tsx/esm", "server.ts"]
 build = ["npm", "run", "build"]
+
+[userenv]
+
+[userenv.shared]
+VITE_SUPABASE_URL = "https://umahyybawmiwatzzasjl.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVtYWh5eWJhd21pd2F0enphc2psIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2OTk4MjYsImV4cCI6MjA5MDI3NTgyNn0.Zk7WRaz7cBPpm4Mj-SccH8B0NGaE-sG2tBQb7qh2ntU"
