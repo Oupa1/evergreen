@@ -39,6 +39,7 @@ import {
   Trophy,
   Loader2,
   X,
+  Menu,
   Image as ImageIcon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -94,6 +95,7 @@ export default function AdminDashboard() {
   const school_id_raw = localStorage.getItem('school_id');
   const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
@@ -1794,39 +1796,48 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
+      {/* Mobile backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-slate-200 hidden lg:flex flex-col sticky top-0 h-screen">
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            {schoolInfo.logo ? (
-              <img src={schoolInfo.logo} alt="Logo" className="w-10 h-10 object-contain" referrerPolicy="no-referrer" />
-            ) : (
-              <div className="w-10 h-10 bg-primary-50 rounded-lg flex items-center justify-center text-primary-600">
-                <GraduationCap className="w-6 h-6" />
-              </div>
-            )}
-            <div className="flex flex-col">
-              <span className="font-bold text-lg tracking-tight text-slate-900 leading-tight">
+      <aside className={`fixed lg:sticky inset-y-0 left-0 top-0 z-50 h-screen bg-white border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out flex-shrink-0 ${sidebarOpen ? 'w-64 translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-16 w-64'}`}>
+        <div className={`border-b border-slate-100 flex items-center ${sidebarOpen ? 'p-6 gap-3' : 'p-3 justify-center'}`}>
+          {schoolInfo.logo ? (
+            <img src={schoolInfo.logo} alt="Logo" className="w-10 h-10 object-contain flex-shrink-0" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-10 h-10 bg-primary-50 rounded-lg flex items-center justify-center text-primary-600 flex-shrink-0">
+              <GraduationCap className="w-6 h-6" />
+            </div>
+          )}
+          {sidebarOpen && (
+            <div className="flex flex-col min-w-0">
+              <span className="font-bold text-lg tracking-tight text-slate-900 leading-tight truncate">
                 {schoolInfo.name || 'Evergreen'}
               </span>
               <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
                 Admin Portal {school_id === 1 && '(Default ID)'}
               </span>
             </div>
-          </div>
+          )}
         </div>
         
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           <button
-            onClick={() => setActiveTab('overview')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
+            onClick={() => { setActiveTab('overview'); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+            title="Dashboard"
+            className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl font-bold transition-all ${sidebarOpen ? '' : 'justify-center'} ${
               activeTab === 'overview' 
                 ? 'bg-primary-50 text-primary-600' 
                 : 'text-slate-600 hover:bg-slate-50'
             }`}
           >
-            <LayoutDashboard className="w-5 h-5" />
-            Dashboard
+            <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
+            {sidebarOpen && <span>Dashboard</span>}
           </button>
 
           {[
@@ -1890,37 +1901,42 @@ export default function AdminDashboard() {
             }
           ].map((category) => (
             <div key={category.id} className="space-y-1">
-              <button
-                onClick={() => {
-                  setExpandedCategories(prev => 
-                    prev.includes(category.id) 
-                      ? prev.filter(id => id !== category.id) 
-                      : [...prev, category.id]
-                  );
-                }}
-                className="w-full flex items-center justify-between px-4 py-2 text-slate-400 font-bold text-xs uppercase tracking-wider hover:text-slate-600 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <category.icon className="w-4 h-4" />
-                  {category.label}
-                </div>
-                {expandedCategories.includes(category.id) ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-              </button>
+              {sidebarOpen ? (
+                <button
+                  onClick={() => {
+                    setExpandedCategories(prev => 
+                      prev.includes(category.id) 
+                        ? prev.filter(id => id !== category.id) 
+                        : [...prev, category.id]
+                    );
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2 text-slate-400 font-bold text-xs uppercase tracking-wider hover:text-slate-600 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <category.icon className="w-4 h-4" />
+                    {category.label}
+                  </div>
+                  {expandedCategories.includes(category.id) ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                </button>
+              ) : (
+                <div className="border-t border-slate-100 my-1" />
+              )}
               
-              {expandedCategories.includes(category.id) && (
-                <div className="space-y-1 ml-2 border-l-2 border-slate-50 pl-2">
+              {(sidebarOpen ? expandedCategories.includes(category.id) : true) && (
+                <div className={sidebarOpen ? 'space-y-1 ml-2 border-l-2 border-slate-50 pl-2' : 'space-y-1'}>
                   {category.subItems.map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => setActiveTab(item.id as Tab)}
-                      className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl font-bold text-sm transition-all ${
+                      title={item.label}
+                      onClick={() => { setActiveTab(item.id as Tab); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl font-bold text-sm transition-all ${sidebarOpen ? '' : 'justify-center'} ${
                         activeTab === item.id 
                           ? 'bg-primary-50 text-primary-600' 
                           : 'text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      <item.icon className="w-4 h-4" />
-                      {item.label}
+                      <item.icon className="w-4 h-4 flex-shrink-0" />
+                      {sidebarOpen && <span>{item.label}</span>}
                     </button>
                   ))}
                 </div>
@@ -1929,39 +1945,46 @@ export default function AdminDashboard() {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-100 space-y-4">
-          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl">
-            <img src="https://i.pravatar.cc/150?u=admin" className="w-10 h-10 rounded-xl object-cover" alt="Admin" />
-            <div>
-              <p className="text-sm font-bold text-slate-900">Admin User</p>
-              <p className="text-xs text-slate-500">Principal</p>
+        <div className={`border-t border-slate-100 space-y-2 ${sidebarOpen ? 'p-4' : 'p-2'}`}>
+          {sidebarOpen && (
+            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl">
+              <img src="https://i.pravatar.cc/150?u=admin" className="w-10 h-10 rounded-xl object-cover flex-shrink-0" alt="Admin" />
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-900 truncate">Admin User</p>
+                <p className="text-xs text-slate-500">Principal</p>
+              </div>
             </div>
-          </div>
+          )}
           <button 
-            onClick={() => {
-              localStorage.removeItem('userRole');
-              navigate('/login');
-            }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors"
+            onClick={() => { localStorage.removeItem('userRole'); navigate('/login'); }}
+            title="Logout"
+            className={`w-full flex items-center gap-3 px-3 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors ${sidebarOpen ? '' : 'justify-center'}`}
           >
-            <LogOut className="w-5 h-5" />
-            Logout
+            <LogOut className="w-5 h-5 flex-shrink-0" />
+            {sidebarOpen && <span>Logout</span>}
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto min-w-0">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-20">
-          <h1 className="text-2xl font-bold text-slate-900 capitalize">{activeTab.replace('-', ' ')}</h1>
+        <header className="bg-white border-b border-slate-200 px-4 py-4 flex items-center gap-3 sticky top-0 z-20">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors flex-shrink-0"
+            title={sidebarOpen ? 'Collapse menu' : 'Expand menu'}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg sm:text-2xl font-bold text-slate-900 capitalize flex-1 truncate">{activeTab.replace(/-/g, ' ')}</h1>
           
-          <div className="flex items-center gap-4">
-            <div className="hidden lg:flex flex-col items-end mr-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="hidden sm:flex flex-col items-end mr-2">
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-primary-500 animate-pulse' : 'bg-slate-300'}`}></span>
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                  {autoRefresh ? 'Auto-refreshing (5s)' : 'Manual refresh only'}
+                  {autoRefresh ? 'Auto-refresh (30s)' : 'Manual refresh only'}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400">Last updated: {lastRefreshed.toLocaleTimeString()}</span>

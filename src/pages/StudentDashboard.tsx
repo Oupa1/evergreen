@@ -25,6 +25,7 @@ import {
   ClipboardList,
   CheckCircle,
   Lock,
+  Menu,
   Image as ImageIcon
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -285,6 +286,7 @@ export default function StudentDashboard() {
   const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('results');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [schoolInfo, setSchoolInfo] = useState({
     name: 'Evergreen Academy',
     logo: '',
@@ -532,102 +534,92 @@ export default function StudentDashboard() {
     : 'N/A';
   return (
     <div className="min-h-screen bg-slate-50 flex">
+      {/* Mobile backdrop */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-slate-200 hidden lg:flex flex-col">
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center gap-2 text-primary-600">
-            {schoolInfo.logo ? (
-              <img src={schoolInfo.logo} alt="Logo" className="w-8 h-8 rounded-lg object-contain" referrerPolicy="no-referrer" />
-            ) : (
-              <GraduationCap className="w-8 h-8" />
-            )}
-            <span className="font-bold text-xl tracking-tight text-slate-900">{schoolInfo.name}</span>
-            <span className="ml-auto text-[10px] text-slate-400 font-normal">Updated: {lastRefreshed.toLocaleTimeString()}</span>
-          </div>
+      <aside className={`fixed lg:sticky inset-y-0 left-0 top-0 z-50 h-screen bg-white border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out flex-shrink-0 ${sidebarOpen ? 'w-64 translate-x-0' : '-translate-x-full lg:translate-x-0 lg:w-16 w-64'}`}>
+        <div className={`border-b border-slate-100 flex items-center ${sidebarOpen ? 'p-6 gap-2' : 'p-3 justify-center'}`}>
+          {schoolInfo.logo ? (
+            <img src={schoolInfo.logo} alt="Logo" className="w-8 h-8 rounded-lg object-contain flex-shrink-0" referrerPolicy="no-referrer" />
+          ) : (
+            <GraduationCap className="w-8 h-8 text-primary-600 flex-shrink-0" />
+          )}
+          {sidebarOpen && (
+            <>
+              <span className="font-bold text-lg tracking-tight text-slate-900 truncate">{schoolInfo.name}</span>
+              <span className="ml-auto text-[10px] text-slate-400 font-normal whitespace-nowrap">{lastRefreshed.toLocaleTimeString()}</span>
+            </>
+          )}
         </div>
         
-        <nav className="flex-1 p-4 space-y-2">
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-              activeTab === 'overview' ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <LayoutDashboard className="w-5 h-5" />
-            Overview
-          </button>
-          <button 
-            onClick={() => setActiveTab('results')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-              activeTab === 'results' ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <Award className="w-5 h-5" />
-            My Results
-          </button>
-          <button 
-            onClick={() => setActiveTab('timetable')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-              activeTab === 'timetable' ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <Calendar className="w-5 h-5" />
-            Timetable
-          </button>
-          <button 
-            onClick={() => setActiveTab('tasks')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-              activeTab === 'tasks' ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <FileText className="w-5 h-5" />
-            Tasks & Quizzes
-          </button>
-          <div className="pt-4 pb-2 px-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Resources</div>
-          <button 
-            onClick={() => setActiveTab('materials')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all ${
-              activeTab === 'materials' ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <Download className="w-5 h-5" />
-            Learning Materials
-          </button>
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+          {[
+            { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
+            { id: 'results', icon: Award, label: 'My Results' },
+            { id: 'timetable', icon: Calendar, label: 'Timetable' },
+            { id: 'tasks', icon: FileText, label: 'Tasks & Quizzes' },
+            { id: 'materials', icon: Download, label: 'Learning Materials' },
+          ].map(item => (
+            <button
+              key={item.id}
+              title={item.label}
+              onClick={() => { setActiveTab(item.id as Tab); if (window.innerWidth < 1024) setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl font-bold transition-all ${sidebarOpen ? '' : 'justify-center'} ${
+                activeTab === item.id ? 'bg-primary-50 text-primary-600' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <item.icon className="w-5 h-5 flex-shrink-0" />
+              {sidebarOpen && <span>{item.label}</span>}
+            </button>
+          ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-100 space-y-4">
-          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl">
-            <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center font-bold">
-              {student.first_name[0]}{student.last_name[0]}
+        <div className={`border-t border-slate-100 space-y-2 ${sidebarOpen ? 'p-4' : 'p-2'}`}>
+          {sidebarOpen && (
+            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl">
+              <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center font-bold flex-shrink-0">
+                {student.first_name[0]}{student.last_name[0]}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-900 truncate">{student.first_name} {student.last_name}</p>
+                <p className="text-xs text-slate-500 truncate">{student.sections?.grades?.name} - {student.sections?.name}</p>
+                {student.student_id && <p className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {student.student_id}</p>}
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-bold text-slate-900">{student.first_name} {student.last_name}</p>
-              <p className="text-xs text-slate-500">{student.sections?.grades?.name} - {student.sections?.name}</p>
-              {student.student_id && <p className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {student.student_id}</p>}
-            </div>
-          </div>
+          )}
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors"
+            title="Logout"
+            className={`w-full flex items-center gap-3 px-3 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors ${sidebarOpen ? '' : 'justify-center'}`}
           >
-            <LogOut className="w-5 h-5" />
-            Logout
+            <LogOut className="w-5 h-5 flex-shrink-0" />
+            {sidebarOpen && <span>Logout</span>}
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto pt-20 lg:pt-0">
+      <main className="flex-1 overflow-y-auto min-w-0">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-10">
-          <h1 className="text-2xl font-bold text-slate-900 hidden md:block">Student Portal</h1>
+        <header className="bg-white border-b border-slate-200 px-4 py-4 flex items-center gap-3 sticky top-0 z-10">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-xl text-slate-500 hover:bg-slate-100 transition-colors flex-shrink-0"
+            title={sidebarOpen ? 'Collapse menu' : 'Expand menu'}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg sm:text-2xl font-bold text-slate-900 flex-1 truncate">Student Portal</h1>
           
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <div className="hidden lg:flex flex-col items-end mr-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="hidden sm:flex flex-col items-end mr-2">
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-primary-500 animate-pulse' : 'bg-slate-300'}`}></span>
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                  {autoRefresh ? 'Auto-refreshing (5s)' : 'Manual refresh only'}
+                  {autoRefresh ? 'Auto-refresh' : 'Manual refresh'}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400">Last updated: {lastRefreshed.toLocaleTimeString()}</span>
