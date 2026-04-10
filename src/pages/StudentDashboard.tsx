@@ -454,6 +454,27 @@ export default function StudentDashboard() {
     return { level: 1, label: 'Not Achieved', description: 'Significant support and revision needed' };
   };
 
+  const getMarkColor = (score: number) => {
+    if (score >= 80) return 'text-amber-500'; // Gold
+    if (score >= 60) return 'text-emerald-600'; // Green
+    if (score >= 40) return 'text-blue-600'; // Blue
+    return 'text-red-600'; // Red
+  };
+
+  const getMarkBg = (score: number) => {
+    if (score >= 80) return 'bg-amber-100 text-amber-700';
+    if (score >= 60) return 'bg-emerald-100 text-emerald-700';
+    if (score >= 40) return 'bg-blue-100 text-blue-700';
+    return 'bg-red-100 text-red-700';
+  };
+
+  const getMarkBarColor = (score: number) => {
+    if (score >= 80) return 'bg-amber-400';
+    if (score >= 60) return 'bg-emerald-500';
+    if (score >= 40) return 'bg-blue-500';
+    return 'bg-red-500';
+  };
+
   const getRecommendations = (score: number, subject: string, passMark: number = 40) => {
     if (score >= 80) {
       return [
@@ -701,7 +722,7 @@ export default function StudentDashboard() {
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className={`text-lg font-bold ${result.score >= getSubjectPassMark(result.subjects?.name, result.subjects?.pass_mark) ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <p className={`text-lg font-bold ${getMarkColor(result.score)}`}>
                               {result.score}%
                             </p>
                             <p className="text-[10px] text-slate-400 uppercase font-bold">Level {getLevel(result.score).level}</p>
@@ -917,12 +938,12 @@ export default function StudentDashboard() {
                                 </td>
                                 <td className="px-6 py-5 text-center">
                                   <div className="inline-flex flex-col items-center">
-                                    <span className={`text-lg font-black ${isPassed ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    <span className={`text-lg font-black ${getMarkColor(Number(result.score))}`}>
                                       {result.score}%
                                     </span>
                                     <div className="w-12 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
                                       <div 
-                                        className={`h-full ${isPassed ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                        className={`h-full ${getMarkBarColor(Number(result.score))}`}
                                         style={{ width: `${result.score}%` }}
                                       />
                                     </div>

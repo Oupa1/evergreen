@@ -58,14 +58,14 @@ export default function LearnerProfile({ student, results: initialResults, subje
   const getMarkColor = (score: number) => {
     if (score >= 80) return 'text-amber-500'; // Gold
     if (score >= 60) return 'text-emerald-600'; // Green
-    if (score >= 40) return 'text-amber-600'; // Orange/Yellow
+    if (score >= 40) return 'text-blue-600'; // Blue
     return 'text-red-600'; // Red
   };
 
   const getMarkBg = (score: number) => {
     if (score >= 80) return 'bg-amber-50 border-amber-100';
     if (score >= 60) return 'bg-emerald-50 border-emerald-100';
-    if (score >= 40) return 'bg-amber-50 border-amber-100';
+    if (score >= 40) return 'bg-blue-50 border-blue-100';
     return 'bg-red-50 border-red-100';
   };
 

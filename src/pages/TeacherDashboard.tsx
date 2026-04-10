@@ -474,14 +474,14 @@ export default function TeacherDashboard() {
   const getMarkColor = (score: number) => {
     if (score >= 80) return 'text-amber-500'; // Gold
     if (score >= 60) return 'text-emerald-600'; // Green
-    if (score >= 40) return 'text-amber-600'; // Amber
+    if (score >= 40) return 'text-blue-600'; // Blue
     return 'text-red-600'; // Red
   };
 
   const getMarkBg = (score: number) => {
     if (score >= 80) return 'bg-amber-100 text-amber-700';
     if (score >= 60) return 'bg-emerald-100 text-emerald-700';
-    if (score >= 40) return 'bg-amber-100 text-amber-700';
+    if (score >= 40) return 'bg-blue-100 text-blue-700';
     return 'bg-red-100 text-red-700';
   };
 
