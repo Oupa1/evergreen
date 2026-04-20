@@ -1733,8 +1733,10 @@ export default function AdminDashboard() {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Learner List Report</title>
     <style>
       body{font-family:Arial,sans-serif;padding:32px;font-size:12px;color:#111}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e2e8f0}
+      .header img{width:64px;height:64px;object-fit:contain;border-radius:8px;border:1px solid #e2e8f0}
       h1{font-size:22px;margin:0 0 2px}
-      h2{font-size:14px;font-weight:normal;color:#555;margin:0 0 14px}
+      h2{font-size:14px;font-weight:normal;color:#555;margin:0}
       .meta{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:20px;font-size:11px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px}
       .meta strong{color:#0f172a}
       table{width:100%;border-collapse:collapse;margin-top:4px}
@@ -1743,8 +1745,10 @@ export default function AdminDashboard() {
       tr:nth-child(even) td{background:#f8fafc}
       .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
     </style></head><body>
-    <h1>${schoolInfo?.name || 'School'}</h1>
-    <h2>Learner List Report</h2>
+    <div class="header">
+      ${(schoolInfo as any)?.logo ? `<img src="${(schoolInfo as any).logo}" alt="Logo" />` : ''}
+      <div><h1>${(schoolInfo as any)?.name || 'School'}</h1><h2>Learner List Report</h2></div>
+    </div>
     <div class="meta">
       <span><strong>Subject:</strong> ${subjectName}</span>
       <span><strong>Grade:</strong> ${gradeName}</span>
