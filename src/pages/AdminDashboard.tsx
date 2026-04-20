@@ -1699,6 +1699,73 @@ export default function AdminDashboard() {
     return getSubjectPassMark(subject?.name, subject?.pass_mark);
   };
 
+  const handleLlPrint = () => {
+    const subjectName = subjects.find(s => s.id === llSubject)?.name || '—';
+    const gradeName = llGrade ? grades.find(g => g.id === llGrade)?.name : 'All Grades';
+    const levelLabel = llLevel === 'all' ? 'All Levels' : `Level ${llLevel}`;
+    const filteredResults = llResults
+      .filter((r: any) => {
+        if (llGrade && r.students?.sections?.grade_id !== llGrade) return false;
+        if (llLevel !== 'all' && getLevel(Number(r.score)).level !== parseInt(llLevel)) return false;
+        return true;
+      })
+      .sort((a: any, b: any) =>
+        `${a.students?.last_name || ''} ${a.students?.first_name || ''}`.localeCompare(
+          `${b.students?.last_name || ''} ${b.students?.first_name || ''}`
+        )
+      );
+    const rows = filteredResults.map((r: any, idx: number) => {
+      const score = Number(r.score);
+      const lvl = getLevel(score).level;
+      const passMark = getSubjectPassMark(subjectName, 40);
+      const isPassed = score >= passMark;
+      return `<tr>
+        <td>${idx + 1}</td>
+        <td>${r.students?.last_name || ''}, ${r.students?.first_name || ''}</td>
+        <td>${r.students?.student_id || '—'}</td>
+        <td>${r.students?.sections?.grades?.name || '—'}</td>
+        <td>${r.students?.sections?.name || '—'}</td>
+        <td style="text-align:center;font-weight:bold">${score}%</td>
+        <td style="text-align:center;font-weight:bold">${lvl}</td>
+        <td style="text-align:center;font-weight:bold;color:${isPassed ? '#15803d' : '#dc2626'}">${isPassed ? 'PASS' : 'FAIL'}</td>
+      </tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Learner List Report</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:32px;font-size:12px;color:#111}
+      h1{font-size:22px;margin:0 0 2px}
+      h2{font-size:14px;font-weight:normal;color:#555;margin:0 0 14px}
+      .meta{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:20px;font-size:11px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px}
+      .meta strong{color:#0f172a}
+      table{width:100%;border-collapse:collapse;margin-top:4px}
+      th{background:#1e293b;color:#fff;padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+      td{border-bottom:1px solid #e2e8f0;padding:8px 12px}
+      tr:nth-child(even) td{background:#f8fafc}
+      .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+    </style></head><body>
+    <h1>${schoolInfo?.name || 'School'}</h1>
+    <h2>Learner List Report</h2>
+    <div class="meta">
+      <span><strong>Subject:</strong> ${subjectName}</span>
+      <span><strong>Grade:</strong> ${gradeName}</span>
+      <span><strong>Level:</strong> ${levelLabel}</span>
+      <span><strong>Term:</strong> ${llTerm}</span>
+      <span><strong>Year:</strong> ${llYear}</span>
+      <span><strong>Total:</strong> ${filteredResults.length} learner${filteredResults.length !== 1 ? 's' : ''}</span>
+    </div>
+    <table><thead><tr>
+      <th>#</th><th>Learner Name</th><th>Student ID</th><th>Grade</th><th>Section</th><th>Score</th><th>Level</th><th>Status</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="footer">Printed: ${new Date().toLocaleString()}</div>
+    </body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 400);
+  };
+
   const downloadStats = () => {
     const statsData = subjects.map(s => {
       const subjectResults = statsResults.filter(r => r.subject_id === s.id);
@@ -3040,31 +3107,21 @@ export default function AdminDashboard() {
 
           {activeTab === 'learner-list' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-              <style>{`
-                @media print {
-                  .ll-no-print { display: none !important; }
-                  .ll-print-show { display: block !important; }
-                  aside { display: none !important; }
-                  main { padding: 0 !important; overflow: visible !important; }
-                  body { background: white !important; }
-                }
-                @media screen { .ll-print-show { display: none !important; } }
-              `}</style>
-
-              <div className="ll-no-print flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Learner List Report</h2>
                   <p className="text-sm text-slate-500 mt-1">Filter by grade, subject and achievement level then print.</p>
                 </div>
                 <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20"
+                  onClick={handleLlPrint}
+                  disabled={!llSubject || llLoading || llResults.length === 0}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Printer className="w-4 h-4" /> Print / Save PDF
                 </button>
               </div>
 
-              <div className="ll-no-print grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
                 {[
                   { label: 'Grade', content: (
                     <select value={llGrade} onChange={(e) => { setLlGrade(e.target.value); setLlSubject(''); }}
@@ -3115,21 +3172,8 @@ export default function AdminDashboard() {
                 ))}
               </div>
 
-              <div className="ll-print-show mb-6 space-y-1">
-                <h1 className="text-2xl font-bold">{schoolInfo?.name || 'School'}</h1>
-                <h2 className="text-lg font-semibold">Learner List Report</h2>
-                <div className="flex flex-wrap gap-6 text-sm mt-2">
-                  <span><strong>Subject:</strong> {subjects.find(s => s.id === llSubject)?.name || '—'}</span>
-                  <span><strong>Grade:</strong> {llGrade ? grades.find(g => g.id === llGrade)?.name : 'All Grades'}</span>
-                  <span><strong>Level:</strong> {llLevel === 'all' ? 'All Levels' : `Level ${llLevel}`}</span>
-                  <span><strong>Term:</strong> {llTerm}</span>
-                  <span><strong>Year:</strong> {llYear}</span>
-                </div>
-                <hr className="my-3" />
-              </div>
-
               {!llSubject ? (
-                <div className="ll-no-print bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
                   <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
                   <p className="text-slate-400 font-medium">Select a subject to load the learner list</p>
                 </div>
