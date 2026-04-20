@@ -85,6 +85,7 @@ export default function TeacherDashboard() {
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [schoolInfo, setSchoolInfo] = useState<any>(null);
+  const [schoolEmis, setSchoolEmis] = useState('');
   const [selectedProfileStudent, setSelectedProfileStudent] = useState<any | null>(null);
   const [selectedAchieverSubject, setSelectedAchieverSubject] = useState<string>(''); // empty means overall
   const [llGrade, setLlGrade] = useState('');
@@ -207,6 +208,9 @@ export default function TeacherDashboard() {
         .eq('school_id', school_id)
         .single();
       setSchoolInfo(schoolData);
+      if (schoolData?.timetable_config?.emis) {
+        setSchoolEmis(schoolData.timetable_config.emis);
+      }
 
       // Fetch assigned classes (where teacher is class teacher OR teaches a subject)
       const { data: classTeacherData } = await supabase
@@ -606,7 +610,11 @@ export default function TeacherDashboard() {
     </style></head><body>
     <div class="header">
       ${schoolInfo?.logo ? `<img src="${schoolInfo.logo}" alt="Logo" />` : ''}
-      <div><h1>${schoolInfo?.name || 'School'}</h1><h2>Learner List Report</h2></div>
+      <div>
+        <h1>${schoolInfo?.name || 'School'}</h1>
+        ${schoolEmis ? `<p style="font-size:11px;color:#64748b;margin:0 0 2px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>Learner List Report</h2>
+      </div>
     </div>
     <div class="meta">
       <span><strong>Subject:</strong> ${subjectName}</span>
@@ -676,7 +684,11 @@ export default function TeacherDashboard() {
     </style></head><body>
     <div class="header">
       ${schoolInfo?.logo ? `<img src="${schoolInfo.logo}" alt="Logo" />` : ''}
-      <div><h1>${schoolInfo?.name || 'School'}</h1><h2>Subject Ranking Report</h2></div>
+      <div>
+        <h1>${schoolInfo?.name || 'School'}</h1>
+        ${schoolEmis ? `<p style="font-size:11px;color:#64748b;margin:0 0 2px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>Subject Ranking Report</h2>
+      </div>
     </div>
     <div class="meta">
       <span><strong>Subject:</strong> ${subjectName}</span>

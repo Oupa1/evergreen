@@ -124,6 +124,7 @@ export default function AdminDashboard() {
       password: ''
     }
   });
+  const [schoolEmis, setSchoolEmis] = useState('');
   const [timetableAllocations, setTimetableAllocations] = useState<any[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<any | null>(null);
   const [studentResults, setStudentResults] = useState<any[]>([]);
@@ -652,6 +653,9 @@ export default function AdminDashboard() {
             breaks: [],
             ...schoolInfoRes.data.timetable_config,
           });
+          if (schoolInfoRes.data.timetable_config.emis) {
+            setSchoolEmis(schoolInfoRes.data.timetable_config.emis);
+          }
         }
       }
       if (resPubsRes.data) setResultPublications(resPubsRes.data);
@@ -1218,7 +1222,11 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       const id = (schoolInfo as any).id;
-      const payload = { ...schoolInfo, school_id };
+      const timetableWithEmis = {
+        ...((schoolInfo as any).timetable_config || {}),
+        emis: schoolEmis.trim(),
+      };
+      const payload = { ...schoolInfo, school_id, timetable_config: timetableWithEmis };
       if (!id) delete (payload as any).id;
 
       const { data, error } = await supabase
@@ -1798,7 +1806,11 @@ export default function AdminDashboard() {
     </style></head><body>
     <div class="header">
       ${(schoolInfo as any)?.logo ? `<img src="${(schoolInfo as any).logo}" alt="Logo" />` : ''}
-      <div><h1>${(schoolInfo as any)?.name || 'School'}</h1><h2>Learner List Report</h2></div>
+      <div>
+        <h1>${(schoolInfo as any)?.name || 'School'}</h1>
+        ${schoolEmis ? `<p style="font-size:11px;color:#64748b;margin:0 0 2px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>Learner List Report</h2>
+      </div>
     </div>
     <div class="meta">
       <span><strong>Subject:</strong> ${subjectName}</span>
@@ -1869,7 +1881,11 @@ export default function AdminDashboard() {
     </style></head><body>
     <div class="header">
       ${(schoolInfo as any)?.logo ? `<img src="${(schoolInfo as any).logo}" alt="Logo" />` : ''}
-      <div><h1>${(schoolInfo as any)?.name || 'School'}</h1><h2>Subject Ranking Report</h2></div>
+      <div>
+        <h1>${(schoolInfo as any)?.name || 'School'}</h1>
+        ${schoolEmis ? `<p style="font-size:11px;color:#64748b;margin:0 0 2px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>Subject Ranking Report</h2>
+      </div>
     </div>
     <div class="meta">
       <span><strong>Subject:</strong> ${subjectName}</span>
@@ -4481,46 +4497,57 @@ export default function AdminDashboard() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">School Logo</label>
-                    <div className="flex items-center gap-4">
-                      {schoolInfo.logo ? (
-                        <div className="relative group">
-                          <img 
-                            src={schoolInfo.logo} 
-                            alt="Logo" 
-                            className="w-20 h-20 rounded-2xl object-contain bg-slate-50 border border-slate-100" 
-                            referrerPolicy="no-referrer"
-                          />
-                          <button 
-                            type="button"
-                            onClick={() => setSchoolInfo({ ...schoolInfo, logo: '' })}
-                            className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="w-20 h-20 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400">
-                          <ImageIcon className="w-8 h-8" />
-                        </div>
-                      )}
-                      <div className="flex-1">
-                        <input 
-                          type="file" 
-                          accept="image/*"
-                          onChange={handleLogoUpload}
-                          className="hidden" 
-                          id="logo-upload"
+                    <label className="text-sm font-bold text-slate-700">EMIS Number</label>
+                    <input
+                      type="text"
+                      value={schoolEmis}
+                      onChange={(e) => setSchoolEmis(e.target.value)}
+                      placeholder="e.g. 700140702"
+                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500"
+                    />
+                    <p className="text-[10px] text-slate-400">Education Management Information System unique school code</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">School Logo</label>
+                  <div className="flex items-center gap-4">
+                    {schoolInfo.logo ? (
+                      <div className="relative group">
+                        <img 
+                          src={schoolInfo.logo} 
+                          alt="Logo" 
+                          className="w-20 h-20 rounded-2xl object-contain bg-slate-50 border border-slate-100" 
+                          referrerPolicy="no-referrer"
                         />
-                        <label 
-                          htmlFor="logo-upload"
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                        <button 
+                          type="button"
+                          onClick={() => setSchoolInfo({ ...schoolInfo, logo: '' })}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                         >
-                          <Download className="w-4 h-4" />
-                          {schoolInfo.logo ? 'Change Logo' : 'Upload Logo'}
-                        </label>
-                        <p className="text-[10px] text-slate-400 mt-2">Recommended: Square image, max 1MB</p>
+                          <X className="w-3 h-3" />
+                        </button>
                       </div>
+                    ) : (
+                      <div className="w-20 h-20 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400">
+                        <ImageIcon className="w-8 h-8" />
+                      </div>
+                    )}
+                    <div className="flex-1">
+                      <input 
+                        type="file" 
+                        accept="image/*"
+                        onChange={handleLogoUpload}
+                        className="hidden" 
+                        id="logo-upload"
+                      />
+                      <label 
+                        htmlFor="logo-upload"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 cursor-pointer transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        {schoolInfo.logo ? 'Change Logo' : 'Upload Logo'}
+                      </label>
+                      <p className="text-[10px] text-slate-400 mt-2">Recommended: Square image, max 1MB</p>
                     </div>
                   </div>
                 </div>

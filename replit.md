@@ -49,3 +49,7 @@ See `.env.example` for required variables:
 - **Learner List Report**: Admin and Teacher can filter by grade/subject/level/term/year to view a printable list of learners with scores, levels, and pass/fail status. Print button triggers `window.print()` with `@media print` CSS that hides navigation and shows only the report.
 - **Subject Pass Mark**: `getSubjectPassMark()` uses a hardcoded lookup — no `pass_mark` column in Supabase
 - **Result Visibility**: Controlled via `result_publications` table
+- **Subject Ranking Report**: Admin and Teacher dashboards — filter by subject/grade/term/year; shows ranked table with medals, summary stats (avg, high, low, pass rate), printable PDF with school branding and EMIS
+- **EMIS Number**: Stored in `timetable_config.emis` JSONB key (no schema change required with anon key). Editable via Admin School Info form. Appears in all printed report headers. To migrate to a proper column when service-role key is available: `ALTER TABLE schools ADD COLUMN IF NOT EXISTS emis TEXT DEFAULT ''`
+- **Supabase Pagination**: Any query that may exceed 1000 rows must use `.range()` pagination (e.g., `fetchStatsResults` uses a loop with `PAGE_SIZE = 500`)
+- **Curriculum Stats Grade Filter**: Charts, tables, and PDF downloads all respect the grade filter and the hide-empty-subjects toggle

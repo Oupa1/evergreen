@@ -205,6 +205,11 @@ BEGIN
     END IF;
 END $$;
 
+-- NOTE: EMIS (Education Management Information System) number is currently stored inside
+-- the timetable_config JSONB column as timetable_config.emis (no ALTER TABLE needed with anon key).
+-- When a service-role key is available, run the following to give it a proper dedicated column:
+-- ALTER TABLE schools ADD COLUMN IF NOT EXISTS emis TEXT DEFAULT '';
+
 -- 10. Timetable Allocations Table
 CREATE TABLE IF NOT EXISTS timetable_allocations (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
