@@ -559,7 +559,13 @@ export default function AdminDashboard() {
       if (schoolInfoRes.data) {
         setSchoolInfo(schoolInfoRes.data);
         if (schoolInfoRes.data.timetable_config) {
-          setTimetableConfig(schoolInfoRes.data.timetable_config);
+          setTimetableConfig({
+            startTime: '08:00',
+            periodDuration: 40,
+            knockOffTime: '14:30',
+            breaks: [],
+            ...schoolInfoRes.data.timetable_config,
+          });
         }
       }
       if (resPubsRes.data) setResultPublications(resPubsRes.data);
@@ -776,7 +782,7 @@ export default function AdminDashboard() {
     let safety = 0;
     while (!isTimeAfter(currentTime, timetableConfig.knockOffTime) && safety < 50) {
       safety++;
-      const activeBreak = timetableConfig.breaks.find(b => b.startTime === currentTime);
+      const activeBreak = (timetableConfig.breaks ?? []).find(b => b.startTime === currentTime);
       
       if (activeBreak) {
         const endTime = addMinutes(currentTime, activeBreak.duration);
@@ -4334,7 +4340,7 @@ export default function AdminDashboard() {
                         Breaks
                       </h3>
                       <div className="space-y-3">
-                        {timetableConfig.breaks.map((brk, idx) => (
+                        {(timetableConfig.breaks ?? []).map((brk, idx) => (
                           <div key={idx} className="flex items-center gap-2 bg-white p-3 rounded-xl border border-slate-200">
                             <div className="flex-1">
                               <div className="text-xs font-bold text-slate-900">{brk.name}</div>
@@ -4342,7 +4348,7 @@ export default function AdminDashboard() {
                             </div>
                             <button 
                               onClick={() => {
-                                const newBreaks = [...timetableConfig.breaks];
+                                const newBreaks = [...(timetableConfig.breaks ?? [])];
                                 newBreaks.splice(idx, 1);
                                 setTimetableConfig({...timetableConfig, breaks: newBreaks});
                               }}
@@ -4360,7 +4366,7 @@ export default function AdminDashboard() {
                             if (name && startTime && duration) {
                               setTimetableConfig({
                                 ...timetableConfig,
-                                breaks: [...timetableConfig.breaks, { name, startTime, duration }]
+                                breaks: [...(timetableConfig.breaks ?? []), { name, startTime, duration }]
                               });
                             }
                           }}
