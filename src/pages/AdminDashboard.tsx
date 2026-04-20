@@ -442,19 +442,34 @@ export default function AdminDashboard() {
   }, [resultSelectedSection, resultSelectedSubject, resultSelectedTerm, resultSelectedYear]);
 
   const fetchStatsResults = async () => {
-    let query = supabase
-      .from('results')
-      .select('*, students(sections(grade_id))')
-      .eq('term', statsSelectedTerm)
-      .eq('year', parseInt(statsSelectedYear))
-      .eq('school_id', school_id);
-    
-    const { data, error } = await query;
-    if (error) {
-      console.error('Error fetching stats results:', error);
-    } else {
-      setStatsResults(data || []);
+    const PAGE_SIZE = 1000;
+    let allData: any[] = [];
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('results')
+        .select('*, students(sections(grade_id))')
+        .eq('term', statsSelectedTerm)
+        .eq('year', parseInt(statsSelectedYear))
+        .eq('school_id', school_id)
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error('Error fetching stats results:', error);
+        break;
+      }
+
+      allData = allData.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) {
+        hasMore = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
     }
+
+    setStatsResults(allData);
   };
 
   useEffect(() => {
