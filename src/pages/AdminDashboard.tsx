@@ -133,6 +133,8 @@ export default function AdminDashboard() {
   const [statsResults, setStatsResults] = useState<any[]>([]);
   const [statsSelectedTerm, setStatsSelectedTerm] = useState('Term 1');
   const [statsSelectedYear, setStatsSelectedYear] = useState(new Date().getFullYear().toString());
+  const [statsSelectedGrade, setStatsSelectedGrade] = useState('');
+  const [statsHideEmpty, setStatsHideEmpty] = useState(true);
   const [llGrade, setLlGrade] = useState('');
   const [llSubject, setLlSubject] = useState('');
   const [llLevel, setLlLevel] = useState('all');
@@ -440,13 +442,14 @@ export default function AdminDashboard() {
   }, [resultSelectedSection, resultSelectedSubject, resultSelectedTerm, resultSelectedYear]);
 
   const fetchStatsResults = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('results')
-      .select('*')
+      .select('*, students(sections(grade_id))')
       .eq('term', statsSelectedTerm)
       .eq('year', parseInt(statsSelectedYear))
       .eq('school_id', school_id);
     
+    const { data, error } = await query;
     if (error) {
       console.error('Error fetching stats results:', error);
     } else {
@@ -1771,8 +1774,14 @@ export default function AdminDashboard() {
   };
 
   const downloadStats = () => {
-    const statsData = subjects.map(s => {
-      const subjectResults = statsResults.filter(r => r.subject_id === s.id);
+    const dlStatsResults = statsSelectedGrade
+      ? statsResults.filter(r => r.students?.sections?.grade_id === statsSelectedGrade)
+      : statsResults;
+    const dlSubjects = statsHideEmpty
+      ? subjects.filter(s => dlStatsResults.some(r => r.subject_id === s.id))
+      : subjects;
+    const statsData = dlSubjects.map(s => {
+      const subjectResults = dlStatsResults.filter(r => r.subject_id === s.id);
       const avgScore = subjectResults.length > 0 
         ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length 
         : 0;
@@ -1881,8 +1890,10 @@ export default function AdminDashboard() {
       tableData = teachers.map(t => [t.first_name, t.last_name, t.email, t.phone || '-']);
     } else if (activeTab === 'stats') {
       tableHeaders = ['Subject', 'Code', 'Pass Mark', 'Avg Score', 'Pass Rate %', 'Total Students'];
-      tableData = subjects.map(s => {
-        const subjectResults = statsResults.filter(r => r.subject_id === s.id);
+      const dlSR2 = statsSelectedGrade ? statsResults.filter(r => r.students?.sections?.grade_id === statsSelectedGrade) : statsResults;
+      const dlSubs2 = statsHideEmpty ? subjects.filter(s => dlSR2.some(r => r.subject_id === s.id)) : subjects;
+      tableData = dlSubs2.map(s => {
+        const subjectResults = dlSR2.filter(r => r.subject_id === s.id);
         const avg = subjectResults.length > 0 ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length : 0;
         const passMark = getSubjectPassMark(s.name, s.pass_mark);
         const passCount = subjectResults.filter(r => r.score >= passMark).length;
@@ -2823,14 +2834,29 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {activeTab === 'stats' && (
+          {activeTab === 'stats' && (() => {
+            const visibleStatsResults = statsSelectedGrade
+              ? statsResults.filter(r => r.students?.sections?.grade_id === statsSelectedGrade)
+              : statsResults;
+            const visibleSubjects = statsHideEmpty
+              ? subjects.filter(s => visibleStatsResults.some(r => r.subject_id === s.id))
+              : subjects;
+            return (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Curriculum Statistics</h2>
                   <p className="text-sm text-slate-500 mt-1">Academic performance overview across all subjects</p>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <select
+                    value={statsSelectedGrade}
+                    onChange={(e) => setStatsSelectedGrade(e.target.value)}
+                    className="px-4 py-2 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">All Grades</option>
+                    {grades.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
                   <select
                     value={statsSelectedTerm}
                     onChange={(e) => setStatsSelectedTerm(e.target.value)}
@@ -2848,18 +2874,20 @@ export default function AdminDashboard() {
                   >
                     {Array.from({ length: 11 }, (_, i) => {
                       const year = new Date().getFullYear() - 5 + i;
-                      return (
-                        <option key={year} value={year.toString()}>
-                          {year}
-                        </option>
-                      );
+                      return <option key={year} value={year.toString()}>{year}</option>;
                     })}
                   </select>
+                  <button
+                    onClick={() => setStatsHideEmpty(h => !h)}
+                    className={`px-4 py-2 rounded-xl font-bold text-sm border transition-all ${statsHideEmpty ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                  >
+                    {statsHideEmpty ? 'Showing: With Data' : 'Showing: All'}
+                  </button>
                   <button 
                     onClick={downloadStats}
                     className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20"
                   >
-                    <Download className="w-4 h-4" /> Download Statistics
+                    <Download className="w-4 h-4" /> Download
                   </button>
                 </div>
               </div>
@@ -2871,8 +2899,8 @@ export default function AdminDashboard() {
                   <div className="h-[400px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
-                        data={subjects.map(s => {
-                          const subjectResults = statsResults.filter(r => r.subject_id === s.id);
+                        data={visibleSubjects.map(s => {
+                          const subjectResults = visibleStatsResults.filter(r => r.subject_id === s.id);
                           const passMark = getSubjectPassMark(s.name, s.pass_mark);
                           const passCount = subjectResults.filter(r => r.score >= passMark).length;
                           const passRate = subjectResults.length > 0 ? (passCount / subjectResults.length) * 100 : 0;
@@ -2905,8 +2933,8 @@ export default function AdminDashboard() {
                   <div className="h-[400px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
-                        data={subjects.map(s => {
-                          const subjectResults = statsResults.filter(r => r.subject_id === s.id);
+                        data={visibleSubjects.map(s => {
+                          const subjectResults = visibleStatsResults.filter(r => r.subject_id === s.id);
                           const avgScore = subjectResults.length > 0 
                             ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length 
                             : 0;
@@ -2946,8 +2974,8 @@ export default function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {subjects.map(s => {
-                      const subjectResults = statsResults.filter(r => r.subject_id === s.id);
+                    {visibleSubjects.map(s => {
+                      const subjectResults = visibleStatsResults.filter(r => r.subject_id === s.id);
                       const avgScore = subjectResults.length > 0 
                         ? subjectResults.reduce((acc, r) => acc + r.score, 0) / subjectResults.length 
                         : 0;
@@ -3107,7 +3135,8 @@ export default function AdminDashboard() {
                 </table>
               </div>
             </motion.div>
-          )}
+            );
+          })()}
 
           {activeTab === 'learner-list' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
