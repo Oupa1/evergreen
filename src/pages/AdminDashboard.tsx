@@ -64,7 +64,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useTheme } from '../components/ThemeProvider';
 
-type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list';
+type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -142,6 +142,12 @@ export default function AdminDashboard() {
   const [llYear, setLlYear] = useState(new Date().getFullYear().toString());
   const [llResults, setLlResults] = useState<any[]>([]);
   const [llLoading, setLlLoading] = useState(false);
+  const [srSubject, setSrSubject] = useState('');
+  const [srGrade, setSrGrade] = useState('');
+  const [srTerm, setSrTerm] = useState('Term 1');
+  const [srYear, setSrYear] = useState(new Date().getFullYear().toString());
+  const [srResults, setSrResults] = useState<any[]>([]);
+  const [srLoading, setSrLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -505,6 +511,33 @@ export default function AdminDashboard() {
       fetchLearnerList();
     }
   }, [activeTab, llSubject, llTerm, llYear]);
+
+  const fetchSubjectRanking = async () => {
+    if (!srSubject) return;
+    setSrLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('results')
+        .select('score, student_id, students(id, first_name, last_name, student_id, sections(name, grade_id, grades(name)))')
+        .eq('school_id', school_id)
+        .eq('subject_id', srSubject)
+        .eq('term', srTerm)
+        .eq('year', parseInt(srYear));
+      if (error) throw error;
+      setSrResults(data || []);
+    } catch (err: any) {
+      console.error('Subject ranking fetch error:', err.message);
+      setSrResults([]);
+    } finally {
+      setSrLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'subject-ranking' && srSubject) {
+      fetchSubjectRanking();
+    }
+  }, [activeTab, srSubject, srTerm, srYear]);
 
   const fetchResultPublications = async () => {
     const { data } = await supabase
@@ -1788,6 +1821,83 @@ export default function AdminDashboard() {
     setTimeout(() => { win.print(); }, 400);
   };
 
+  const handleSrPrint = () => {
+    const subjectName = subjects.find(s => s.id === srSubject)?.name || '—';
+    const gradeName = srGrade ? grades.find(g => g.id === srGrade)?.name : 'All Grades';
+    const ranked = srResults
+      .filter((r: any) => !srGrade || r.students?.sections?.grade_id === srGrade)
+      .sort((a: any, b: any) => Number(b.score) - Number(a.score));
+    const avg = ranked.length > 0 ? ranked.reduce((s: number, r: any) => s + Number(r.score), 0) / ranked.length : 0;
+    const passMark = getSubjectPassMark(subjectName, 40);
+    const passCount = ranked.filter((r: any) => Number(r.score) >= passMark).length;
+    const passRate = ranked.length > 0 ? ((passCount / ranked.length) * 100).toFixed(1) : '0';
+    const medalColor = (rank: number) => rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#b45309' : '#1e293b';
+    const rows = ranked.map((r: any, idx: number) => {
+      const score = Number(r.score);
+      const lvl = getLevel(score).level;
+      const isPassed = score >= passMark;
+      const rank = idx + 1;
+      return `<tr>
+        <td style="text-align:center;font-weight:bold;color:${medalColor(rank)}">${rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank}</td>
+        <td>${r.students?.last_name || ''}, ${r.students?.first_name || ''}</td>
+        <td>${r.students?.student_id || '—'}</td>
+        <td>${r.students?.sections?.grades?.name || '—'}</td>
+        <td>${r.students?.sections?.name || '—'}</td>
+        <td style="text-align:center;font-weight:bold">${score}%</td>
+        <td style="text-align:center;font-weight:bold">${lvl}</td>
+        <td style="text-align:center;font-weight:bold;color:${isPassed ? '#15803d' : '#dc2626'}">${isPassed ? 'PASS' : 'FAIL'}</td>
+      </tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Subject Ranking Report</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:32px;font-size:12px;color:#111}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e2e8f0}
+      .header img{width:64px;height:64px;object-fit:contain;border-radius:8px;border:1px solid #e2e8f0}
+      h1{font-size:22px;margin:0 0 2px}
+      h2{font-size:14px;font-weight:normal;color:#555;margin:0}
+      .meta{display:flex;flex-wrap:wrap;gap:20px;margin-bottom:16px;font-size:11px;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px}
+      .meta strong{color:#0f172a}
+      .stats-bar{display:flex;gap:12px;margin-bottom:16px}
+      .stat-box{flex:1;padding:10px 14px;border-radius:6px;border:1px solid #e2e8f0;text-align:center}
+      .stat-box .val{font-size:18px;font-weight:bold;color:#0f172a}
+      .stat-box .lbl{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
+      table{width:100%;border-collapse:collapse;margin-top:4px}
+      th{background:#1e293b;color:#fff;padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+      td{border-bottom:1px solid #e2e8f0;padding:8px 12px}
+      tr:nth-child(even) td{background:#f8fafc}
+      .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+    </style></head><body>
+    <div class="header">
+      ${(schoolInfo as any)?.logo ? `<img src="${(schoolInfo as any).logo}" alt="Logo" />` : ''}
+      <div><h1>${(schoolInfo as any)?.name || 'School'}</h1><h2>Subject Ranking Report</h2></div>
+    </div>
+    <div class="meta">
+      <span><strong>Subject:</strong> ${subjectName}</span>
+      <span><strong>Grade:</strong> ${gradeName}</span>
+      <span><strong>Term:</strong> ${srTerm}</span>
+      <span><strong>Year:</strong> ${srYear}</span>
+      <span><strong>Total Learners:</strong> ${ranked.length}</span>
+    </div>
+    <div class="stats-bar">
+      <div class="stat-box"><div class="val">${avg.toFixed(1)}%</div><div class="lbl">Average Score</div></div>
+      <div class="stat-box"><div class="val">${ranked.length > 0 ? Number(ranked[0].score).toFixed(1) : '—'}%</div><div class="lbl">Highest Score</div></div>
+      <div class="stat-box"><div class="val">${ranked.length > 0 ? Number(ranked[ranked.length-1].score).toFixed(1) : '—'}%</div><div class="lbl">Lowest Score</div></div>
+      <div class="stat-box"><div class="val">${passRate}%</div><div class="lbl">Pass Rate</div></div>
+      <div class="stat-box"><div class="val">${passMark}%</div><div class="lbl">Pass Mark</div></div>
+    </div>
+    <table><thead><tr>
+      <th>Rank</th><th>Learner Name</th><th>Student ID</th><th>Grade</th><th>Section</th><th>Score</th><th>Level</th><th>Status</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="footer">Printed: ${new Date().toLocaleString()}</div>
+    </body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 400);
+  };
+
   const downloadStats = () => {
     const dlStatsResults = statsSelectedGrade
       ? statsResults.filter(r => r.students?.sections?.grade_id === statsSelectedGrade)
@@ -1989,6 +2099,7 @@ export default function AdminDashboard() {
                 { id: 'results-schedule', label: 'Results Schedule', icon: ClipboardList },
                 { id: 'stats', label: 'Curriculum Stats', icon: BarChart3 },
                 { id: 'learner-list', label: 'Learner List Report', icon: ClipboardList },
+                { id: 'subject-ranking', label: 'Subject Ranking Report', icon: Trophy },
               ]
             },
             {
@@ -3299,6 +3410,164 @@ export default function AdminDashboard() {
                     </div>
                     <div className="ll-print-show px-6 py-3 border-t border-slate-100 text-xs text-slate-500">
                       Total: {filteredLlResults.length} learner{filteredLlResults.length !== 1 ? 's' : ''} · Printed: {new Date().toLocaleDateString()}
+                    </div>
+                  </div>
+                );
+              })()}
+            </motion.div>
+          )}
+
+          {activeTab === 'subject-ranking' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Subject Ranking Report</h2>
+                  <p className="text-sm text-slate-500 mt-1">Learners ranked by score for a subject. Includes average and summary stats.</p>
+                </div>
+                <button
+                  onClick={handleSrPrint}
+                  disabled={!srSubject || srLoading || srResults.length === 0}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Printer className="w-4 h-4" /> Print / Save PDF
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                {[
+                  { label: 'Grade', content: (
+                    <select value={srGrade} onChange={(e) => setSrGrade(e.target.value)}
+                      className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                      <option value="">All Grades</option>
+                      {grades.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  )},
+                  { label: 'Subject', content: (
+                    <select value={srSubject} onChange={(e) => setSrSubject(e.target.value)}
+                      className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                      <option value="">Select Subject</option>
+                      {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )},
+                  { label: 'Term', content: (
+                    <select value={srTerm} onChange={(e) => setSrTerm(e.target.value)}
+                      className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                      <option>Term 1</option><option>Term 2</option><option>Term 3</option><option>Term 4</option>
+                    </select>
+                  )},
+                  { label: 'Year', content: (
+                    <select value={srYear} onChange={(e) => setSrYear(e.target.value)}
+                      className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                      {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => (
+                        <option key={y} value={y.toString()}>{y}</option>
+                      ))}
+                    </select>
+                  )},
+                ].map(({ label, content }) => (
+                  <div key={label} className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</label>
+                    {content}
+                  </div>
+                ))}
+              </div>
+
+              {!srSubject ? (
+                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                  <Trophy className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                  <p className="text-slate-400 font-medium">Select a subject to see the ranking</p>
+                </div>
+              ) : srLoading ? (
+                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                  <Loader2 className="w-10 h-10 text-primary-500 animate-spin mx-auto mb-4" />
+                  <p className="text-slate-400">Loading ranking…</p>
+                </div>
+              ) : (() => {
+                const ranked = srResults
+                  .filter((r: any) => !srGrade || r.students?.sections?.grade_id === srGrade)
+                  .sort((a: any, b: any) => Number(b.score) - Number(a.score));
+                const subjectName = subjects.find(s => s.id === srSubject)?.name || '';
+                const passMark = getSubjectPassMark(subjectName, 40);
+                const avg = ranked.length > 0 ? ranked.reduce((s: number, r: any) => s + Number(r.score), 0) / ranked.length : 0;
+                const highest = ranked.length > 0 ? Number(ranked[0].score) : 0;
+                const lowest = ranked.length > 0 ? Number(ranked[ranked.length - 1].score) : 0;
+                const passCount = ranked.filter((r: any) => Number(r.score) >= passMark).length;
+                const passRate = ranked.length > 0 ? ((passCount / ranked.length) * 100).toFixed(1) : '0';
+                return ranked.length === 0 ? (
+                  <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                    <Trophy className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-400 font-medium">No results found for the selected filters</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                      {[
+                        { label: 'Average Score', value: `${avg.toFixed(1)}%`, color: 'text-blue-600' },
+                        { label: 'Highest Score', value: `${highest.toFixed(1)}%`, color: 'text-amber-500' },
+                        { label: 'Lowest Score', value: `${lowest.toFixed(1)}%`, color: 'text-red-500' },
+                        { label: 'Pass Rate', value: `${passRate}%`, color: passRate >= '50' ? 'text-emerald-600' : 'text-red-500' },
+                        { label: 'Pass Mark', value: `${passMark}%`, color: 'text-slate-700' },
+                      ].map(stat => (
+                        <div key={stat.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 text-center">
+                          <p className={`text-2xl font-black ${stat.color}`}>{stat.value}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">{stat.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between">
+                        <p className="font-bold text-slate-900">{ranked.length} Learner{ranked.length !== 1 ? 's' : ''} Ranked</p>
+                        <span className="text-xs text-slate-500">{subjectName} · {srTerm} {srYear}</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="bg-slate-50">
+                              {['Rank', 'Learner Name', 'Student ID', 'Grade', 'Section', 'Score', 'Level', 'Status'].map(h => (
+                                <th key={h} className="px-6 py-4 font-bold text-slate-400 text-xs uppercase tracking-wider">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {ranked.map((r: any, idx: number) => {
+                              const score = Number(r.score);
+                              const levelInfo = getLevel(score);
+                              const isPassed = score >= passMark;
+                              const rank = idx + 1;
+                              const medalEmoji = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
+                              return (
+                                <tr key={r.student_id || idx} className={`hover:bg-slate-50/50 transition-colors ${rank <= 3 ? 'bg-amber-50/30' : ''}`}>
+                                  <td className="px-6 py-4">
+                                    {medalEmoji ? (
+                                      <span className="text-xl">{medalEmoji}</span>
+                                    ) : (
+                                      <span className="font-mono text-sm text-slate-500">{rank}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4 font-bold text-slate-900">
+                                    {r.students?.last_name || ''}, {r.students?.first_name || ''}
+                                  </td>
+                                  <td className="px-6 py-4 text-slate-500 font-mono text-xs">{r.students?.student_id || '—'}</td>
+                                  <td className="px-6 py-4 text-slate-600">{r.students?.sections?.grades?.name || '—'}</td>
+                                  <td className="px-6 py-4 text-slate-600">{r.students?.sections?.name || '—'}</td>
+                                  <td className="px-6 py-4">
+                                    <span className={`font-black ${getMarkColor(score)}`}>{score}%</span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-black border-2 ${getMarkBg(score)}`}>
+                                      {levelInfo.level}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${isPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                      {isPassed ? 'Pass' : 'Fail'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 );
