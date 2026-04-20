@@ -42,3 +42,10 @@ See `.env.example` for required variables:
 - Server listens on `0.0.0.0:5000` in development
 - Vite `allowedHosts: true` is set for Replit proxy compatibility
 - The Express server handles API proxy routes for SMS and serves Vite middleware in dev mode
+
+## Feature Highlights
+- **Responsive Sidebars**: Collapsible icon-only mode on desktop; full overlay on mobile across all dashboards
+- **Mark Color Scheme**: 0-39% RED, 40-59% BLUE, 60-79% GREEN, 80-100% GOLD
+- **Learner List Report**: Admin and Teacher can filter by grade/subject/level/term/year to view a printable list of learners with scores, levels, and pass/fail status. Print button triggers `window.print()` with `@media print` CSS that hides navigation and shows only the report.
+- **Subject Pass Mark**: `getSubjectPassMark()` uses a hardcoded lookup — no `pass_mark` column in Supabase
+- **Result Visibility**: Controlled via `result_publications` table

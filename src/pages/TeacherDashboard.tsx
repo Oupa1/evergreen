@@ -26,14 +26,15 @@ import {
   Image as ImageIcon,
   Brain,
   Trash2,
-  Menu
+  Menu,
+  Printer
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import LearnerProfile from '../components/LearnerProfile';
 import { generateQuizFromImage } from '../lib/gemini';
 
-type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials';
+type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list';
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
@@ -86,6 +87,13 @@ export default function TeacherDashboard() {
   const [schoolInfo, setSchoolInfo] = useState<any>(null);
   const [selectedProfileStudent, setSelectedProfileStudent] = useState<any | null>(null);
   const [selectedAchieverSubject, setSelectedAchieverSubject] = useState<string>(''); // empty means overall
+  const [llGrade, setLlGrade] = useState('');
+  const [llSubject, setLlSubject] = useState('');
+  const [llLevel, setLlLevel] = useState('all');
+  const [llTerm, setLlTerm] = useState('Term 1');
+  const [llYear, setLlYear] = useState(new Date().getFullYear().toString());
+  const [llResults, setLlResults] = useState<any[]>([]);
+  const [llLoading, setLlLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [resultsView, setResultsView] = useState<'schedule' | 'subject'>('schedule');
   const [resultsSelectedTerm, setResultsSelectedTerm] = useState('Term 1');
@@ -274,6 +282,33 @@ export default function TeacherDashboard() {
       fetchClassData();
     }
   }, [selectedClass, attendanceDate]);
+
+  const fetchLearnerList = async () => {
+    if (!llSubject) return;
+    setLlLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('results')
+        .select('score, student_id, students(id, first_name, last_name, student_id, sections(name, grade_id, grades(name)))')
+        .eq('school_id', school_id)
+        .eq('subject_id', llSubject)
+        .eq('term', llTerm)
+        .eq('year', parseInt(llYear));
+      if (error) throw error;
+      setLlResults(data || []);
+    } catch (err: any) {
+      console.error('Learner list fetch error:', err.message);
+      setLlResults([]);
+    } finally {
+      setLlLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'learner-list' && llSubject) {
+      fetchLearnerList();
+    }
+  }, [activeTab, llSubject, llTerm, llYear]);
 
   const fetchClassData = async () => {
     if (!selectedClass) return;
@@ -612,6 +647,7 @@ export default function TeacherDashboard() {
           {[
             { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
             { id: 'results', icon: Trophy, label: 'Results' },
+            { id: 'learner-list', icon: Users, label: 'Learner List' },
             { id: 'attendance', icon: ClipboardList, label: 'Attendance' },
             { id: 'timetable', icon: Calendar, label: 'Timetable' },
             { id: 'meetings', icon: Bell, label: 'Meetings' },
@@ -1433,6 +1469,182 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'learner-list' && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+                <style>{`
+                  @media print {
+                    .ll-no-print { display: none !important; }
+                    .ll-print-show { display: block !important; }
+                    aside { display: none !important; }
+                    main { padding: 0 !important; overflow: visible !important; }
+                    body { background: white !important; }
+                  }
+                  @media screen { .ll-print-show { display: none !important; } }
+                `}</style>
+
+                <div className="ll-no-print flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">Learner List Report</h2>
+                    <p className="text-sm text-slate-500 mt-1">Filter by grade, subject and achievement level then print.</p>
+                  </div>
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20"
+                  >
+                    <Printer className="w-4 h-4" /> Print / Save PDF
+                  </button>
+                </div>
+
+                <div className="ll-no-print grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                  {[
+                    { label: 'Grade', content: (
+                      <select value={llGrade} onChange={(e) => { setLlGrade(e.target.value); setLlSubject(''); }}
+                        className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                        <option value="">All Grades</option>
+                        {grades.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    )},
+                    { label: 'Subject', content: (
+                      <select value={llSubject} onChange={(e) => setLlSubject(e.target.value)}
+                        className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                        <option value="">Select Subject</option>
+                        {subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    )},
+                    { label: 'Level', content: (
+                      <select value={llLevel} onChange={(e) => setLlLevel(e.target.value)}
+                        className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                        <option value="all">All Levels</option>
+                        <option value="7">L7 — Outstanding (80-100%)</option>
+                        <option value="6">L6 — Meritorious (70-79%)</option>
+                        <option value="5">L5 — Substantial (60-69%)</option>
+                        <option value="4">L4 — Adequate (50-59%)</option>
+                        <option value="3">L3 — Moderate (40-49%)</option>
+                        <option value="2">L2 — Elementary (30-39%)</option>
+                        <option value="1">L1 — Not Achieved (0-29%)</option>
+                      </select>
+                    )},
+                    { label: 'Term', content: (
+                      <select value={llTerm} onChange={(e) => setLlTerm(e.target.value)}
+                        className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                        <option>Term 1</option><option>Term 2</option><option>Term 3</option><option>Term 4</option>
+                      </select>
+                    )},
+                    { label: 'Year', content: (
+                      <select value={llYear} onChange={(e) => setLlYear(e.target.value)}
+                        className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
+                        {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 2 + i).map(y => (
+                          <option key={y} value={y.toString()}>{y}</option>
+                        ))}
+                      </select>
+                    )},
+                  ].map(({ label, content }) => (
+                    <div key={label} className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</label>
+                      {content}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="ll-print-show mb-6 space-y-1">
+                  <h1 className="text-2xl font-bold">{schoolInfo?.name || 'School'}</h1>
+                  <h2 className="text-lg font-semibold">Learner List Report</h2>
+                  <div className="flex flex-wrap gap-6 text-sm mt-2">
+                    <span><strong>Subject:</strong> {subjects.find((s: any) => s.id === llSubject)?.name || '—'}</span>
+                    <span><strong>Grade:</strong> {llGrade ? grades.find((g: any) => g.id === llGrade)?.name : 'All Grades'}</span>
+                    <span><strong>Level:</strong> {llLevel === 'all' ? 'All Levels' : `Level ${llLevel}`}</span>
+                    <span><strong>Term:</strong> {llTerm}</span>
+                    <span><strong>Year:</strong> {llYear}</span>
+                  </div>
+                  <hr className="my-3" />
+                </div>
+
+                {!llSubject ? (
+                  <div className="ll-no-print bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                    <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <p className="text-slate-400 font-medium">Select a subject to load the learner list</p>
+                  </div>
+                ) : llLoading ? (
+                  <div className="ll-no-print bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                    <Loader2 className="w-10 h-10 text-primary-500 animate-spin mx-auto mb-4" />
+                    <p className="text-slate-400">Loading learners…</p>
+                  </div>
+                ) : (() => {
+                  const filteredLlResults = llResults
+                    .filter((r: any) => {
+                      if (llGrade && r.students?.sections?.grade_id !== llGrade) return false;
+                      if (llLevel !== 'all' && getLevel(Number(r.score)).level !== parseInt(llLevel)) return false;
+                      return true;
+                    })
+                    .sort((a: any, b: any) => {
+                      const aName = `${a.students?.last_name || ''} ${a.students?.first_name || ''}`;
+                      const bName = `${b.students?.last_name || ''} ${b.students?.first_name || ''}`;
+                      return aName.localeCompare(bName);
+                    });
+                  return filteredLlResults.length === 0 ? (
+                    <div className="ll-no-print bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-16 text-center">
+                      <Users className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                      <p className="text-slate-400 font-medium">No learners found for the selected filters</p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="ll-no-print px-8 py-5 border-b border-slate-100 flex items-center justify-between">
+                        <p className="font-bold text-slate-900">{filteredLlResults.length} Learner{filteredLlResults.length !== 1 ? 's' : ''}</p>
+                        <span className="text-xs text-slate-500">{subjects.find((s: any) => s.id === llSubject)?.name} · {llTerm} {llYear}</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="bg-slate-50">
+                              {['#', 'Learner Name', 'Student ID', 'Grade', 'Section', 'Score', 'Level', 'Status'].map(h => (
+                                <th key={h} className="px-6 py-4 font-bold text-slate-400 text-xs uppercase tracking-wider">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredLlResults.map((r: any, idx: number) => {
+                              const score = Number(r.score);
+                              const levelInfo = getLevel(score);
+                              const subjectName = subjects.find((s: any) => s.id === llSubject)?.name;
+                              const passMark = getSubjectPassMark(subjectName, 40);
+                              const isPassed = score >= passMark;
+                              return (
+                                <tr key={r.student_id || idx} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-6 py-4 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                                  <td className="px-6 py-4 font-bold text-slate-900">
+                                    {r.students?.last_name}, {r.students?.first_name}
+                                  </td>
+                                  <td className="px-6 py-4 font-mono text-xs text-slate-500">{r.students?.student_id || '—'}</td>
+                                  <td className="px-6 py-4 text-slate-600">{r.students?.sections?.grades?.name || '—'}</td>
+                                  <td className="px-6 py-4 text-slate-600">{r.students?.sections?.name || '—'}</td>
+                                  <td className="px-6 py-4">
+                                    <span className={`font-black ${getMarkColor(score)}`}>{score}%</span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-black border-2 ${getMarkBg(score)}`}>
+                                      {levelInfo.level}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${isPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                      {isPassed ? 'Pass' : 'Fail'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="ll-print-show px-6 py-3 border-t border-slate-100 text-xs text-slate-500">
+                        Total: {filteredLlResults.length} learner{filteredLlResults.length !== 1 ? 's' : ''} · Printed: {new Date().toLocaleDateString()}
+                      </div>
+                    </div>
+                  );
+                })()}
               </motion.div>
             )}
           </motion.div>
