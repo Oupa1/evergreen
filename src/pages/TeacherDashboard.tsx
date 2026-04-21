@@ -30,14 +30,15 @@ import {
   Printer,
   Sparkles,
   BookMarked,
-  ChevronDown
+  ChevronDown,
+  BarChart2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import LearnerProfile from '../components/LearnerProfile';
 import { generateQuizFromImage, generateCAPSLessonPlan } from '../lib/gemini';
 
-type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking' | 'lesson-plan';
+type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking' | 'lesson-plan' | 'analysis-of-results';
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
@@ -113,6 +114,14 @@ export default function TeacherDashboard() {
   const [lpLoading, setLpLoading] = useState(false);
   const [lpPlan, setLpPlan] = useState<any>(null);
   const [lpError, setLpError] = useState('');
+  // Analysis of Results
+  const [arGrade, setArGrade] = useState('');
+  const [arSection, setArSection] = useState('');
+  const [arSubject, setArSubject] = useState('');
+  const [arYear, setArYear] = useState(new Date().getFullYear().toString());
+  const [arResults, setArResults] = useState<any[]>([]);
+  const [arLoading, setArLoading] = useState(false);
+  const [arSections, setArSections] = useState<any[]>([]);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [resultsView, setResultsView] = useState<'schedule' | 'subject'>('schedule');
   const [resultsSelectedTerm, setResultsSelectedTerm] = useState('Term 1');
@@ -358,6 +367,133 @@ export default function TeacherDashboard() {
       fetchSubjectRanking();
     }
   }, [activeTab, srSubject, srTerm, srYear]);
+
+  // Fetch sections when grade changes for Analysis of Results
+  useEffect(() => {
+    if (!arGrade) { setArSections([]); setArSection(''); return; }
+    supabase.from('sections').select('*').eq('grade_id', arGrade).eq('school_id', school_id)
+      .order('name').then(({ data }) => { setArSections(data || []); setArSection(''); });
+  }, [arGrade]);
+
+  const fetchAnalysisResults = async () => {
+    if (!arSection || !arSubject) return;
+    setArLoading(true);
+    try {
+      const { data: sectionStudents } = await supabase
+        .from('students').select('id').eq('section_id', arSection).eq('school_id', school_id);
+      const studentIds = (sectionStudents || []).map((s: any) => s.id);
+      if (studentIds.length === 0) { setArResults([]); setArLoading(false); return; }
+      const { data, error } = await supabase
+        .from('results')
+        .select('score, term, student_id')
+        .in('student_id', studentIds)
+        .eq('subject_id', arSubject)
+        .eq('year', parseInt(arYear))
+        .eq('school_id', school_id);
+      if (error) throw error;
+      setArResults(data || []);
+    } catch (err: any) {
+      console.error('Analysis fetch error:', err.message);
+      setArResults([]);
+    } finally {
+      setArLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'analysis-of-results' && arSection && arSubject) {
+      fetchAnalysisResults();
+    }
+  }, [activeTab, arSection, arSubject, arYear]);
+
+  const computeTermStats = (term: string) => {
+    const termResults = arResults.filter((r: any) => r.term === term);
+    const total = termResults.length;
+    const counts = [0, 0, 0, 0, 0, 0, 0]; // index 0 = level 1 ... 6 = level 7
+    termResults.forEach((r: any) => { const lvl = getLevel(Number(r.score)).level; counts[lvl - 1]++; });
+    const l4Above = counts.slice(3).reduce((a: number, b: number) => a + b, 0);
+    const l5Above = counts.slice(4).reduce((a: number, b: number) => a + b, 0);
+    return { total, counts, l4Above, l5Above };
+  };
+
+  const handleArPrint = () => {
+    const subjectName = subjects.find((s: any) => s.id === arSubject)?.name || '—';
+    const gradeName = grades.find((g: any) => g.id === arGrade)?.name || '—';
+    const sectionName = arSections.find((s: any) => s.id === arSection)?.name || '—';
+    const TERMS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
+    const termData = TERMS.map(t => ({ term: t, ...computeTermStats(t) }));
+
+    const termTableHtml = (td: ReturnType<typeof computeTermStats> & { term: string }) => {
+      const rows = [1,2,3,4,5,6,7].map(lvl => {
+        const count = td.counts[lvl - 1];
+        const pct = td.total > 0 ? ((count / td.total) * 100).toFixed(1) : '0.0';
+        return `<tr><td>${lvl}</td><td style="text-align:center">${count}</td><td style="text-align:center">${pct}%</td></tr>`;
+      }).join('');
+      const avgScore = td.total > 0
+        ? (arResults.filter((r:any) => r.term === td.term).reduce((s:number,r:any) => s + Number(r.score), 0) / td.total).toFixed(1)
+        : '0';
+      return `
+        <div class="term-block">
+          <h3>${td.term}</h3>
+          <table>
+            <thead><tr><th>Level</th><th>No of Learners</th><th>%</th></tr></thead>
+            <tbody>
+              ${rows}
+              <tr class="total-row"><td colspan="2"><strong>Total/Avg</strong></td><td style="text-align:center"><strong>${td.total > 0 ? avgScore + '%' : '—'}</strong></td></tr>
+            </tbody>
+          </table>
+          <p class="summary-line">Learners level 4 and above: <span class="fill-line">${td.l4Above}</span></p>
+          <p class="summary-line">Learners level 5 and above: <span class="fill-line">${td.l5Above}</span></p>
+        </div>`;
+    };
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Analysis of Results</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:28px;font-size:11px;color:#111}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #1e293b}
+      .header img{width:60px;height:60px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0}
+      h1{font-size:20px;margin:0 0 2px;text-decoration:underline}
+      h2{font-size:12px;font-weight:normal;color:#555;margin:0}
+      .meta{display:flex;gap:24px;margin-bottom:16px;font-size:11px}
+      .meta span{font-weight:bold;text-decoration:underline}
+      .meta em{font-weight:normal;text-decoration:none}
+      .terms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:10px}
+      .term-block{}
+      .term-block h3{text-align:center;font-size:11px;font-weight:bold;margin:0 0 6px;text-decoration:underline}
+      table{width:100%;border-collapse:collapse;font-size:10px}
+      th{border:1px solid #000;padding:4px 6px;text-align:left;font-size:9px;writing-mode:initial}
+      td{border:1px solid #000;padding:4px 6px}
+      .total-row td{background:#f0f0f0;font-weight:bold}
+      .summary-line{font-size:10px;margin:5px 0 0;display:flex;align-items:center;gap:4px}
+      .fill-line{border-bottom:1px solid #000;min-width:30px;display:inline-block;text-align:center;font-weight:bold}
+      .footer{margin-top:18px;font-size:9px;color:#888;border-top:1px solid #e2e8f0;padding-top:8px}
+    </style></head><body>
+    <div class="header">
+      ${schoolInfo?.logo ? `<img src="${schoolInfo.logo}" alt="Logo" />` : ''}
+      <div>
+        <h1>Analysis of Results</h1>
+        ${schoolEmis ? `<p style="font-size:10px;color:#64748b;margin:2px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>${schoolInfo?.name || 'School'}</h2>
+      </div>
+    </div>
+    <div class="meta">
+      <div><span>Subject: </span><em>${subjectName}</em></div>
+      <div><span>Grade: </span><em>${gradeName}</em></div>
+      <div><span>Class: </span><em>${sectionName}</em></div>
+      <div><span>Year: </span><em>${arYear}</em></div>
+    </div>
+    <div class="terms-grid">
+      ${termData.map(termTableHtml).join('')}
+    </div>
+    <div class="footer">Printed: ${new Date().toLocaleString()}</div>
+    </body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 400);
+  };
 
   const fetchClassData = async () => {
     if (!selectedClass) return;
@@ -1028,6 +1164,7 @@ export default function TeacherDashboard() {
             { id: 'results', icon: Trophy, label: 'Results' },
             { id: 'learner-list', icon: Users, label: 'Learner List' },
             { id: 'subject-ranking', icon: Trophy, label: 'Subject Ranking' },
+            { id: 'analysis-of-results', icon: BarChart2, label: 'Analysis of Results' },
             { id: 'attendance', icon: ClipboardList, label: 'Attendance' },
             { id: 'timetable', icon: Calendar, label: 'Timetable' },
             { id: 'meetings', icon: Bell, label: 'Meetings' },
@@ -2371,6 +2508,186 @@ export default function TeacherDashboard() {
               </motion.div>
             )}
           </motion.div>
+          {/* ── ANALYSIS OF RESULTS TAB ── */}
+          {activeTab === 'analysis-of-results' && (
+            <motion.div key="analysis-of-results" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <BarChart2 className="w-6 h-6 text-primary-600" />
+                    Analysis of Results
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">Level distribution per term for a class and subject</p>
+                </div>
+                {arResults.length > 0 && (
+                  <button
+                    onClick={handleArPrint}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-2xl text-sm font-bold hover:bg-slate-700 transition-all shadow-sm"
+                  >
+                    <Printer className="w-4 h-4" /> Print / Save PDF
+                  </button>
+                )}
+              </div>
+
+              {/* Filters */}
+              <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                  <BarChart2 className="w-4 h-4 text-primary-500" /> Select Class &amp; Subject
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Grade</label>
+                    <select
+                      value={arGrade}
+                      onChange={e => { setArGrade(e.target.value); setArResults([]); }}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                    >
+                      <option value="">Select grade</option>
+                      {grades.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Section</label>
+                    <select
+                      value={arSection}
+                      onChange={e => { setArSection(e.target.value); setArResults([]); }}
+                      disabled={!arGrade}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 disabled:opacity-50"
+                    >
+                      <option value="">Select section</option>
+                      {arSections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Subject</label>
+                    <select
+                      value={arSubject}
+                      onChange={e => { setArSubject(e.target.value); setArResults([]); }}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                    >
+                      <option value="">Select subject</option>
+                      {subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Year</label>
+                    <select
+                      value={arYear}
+                      onChange={e => { setArYear(e.target.value); setArResults([]); }}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                    >
+                      {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {arGrade && arSection && arSubject && (
+                  <div className="mt-4">
+                    <button
+                      onClick={fetchAnalysisResults}
+                      disabled={arLoading}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white rounded-2xl text-sm font-bold hover:bg-primary-700 transition-all shadow-sm disabled:opacity-50"
+                    >
+                      {arLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <BarChart2 className="w-4 h-4" />}
+                      {arLoading ? 'Loading…' : 'Load Results'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Prompt if not ready */}
+              {(!arGrade || !arSection || !arSubject) && (
+                <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-10 text-center text-slate-400">
+                  <BarChart2 className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                  <p className="font-medium">Select a grade, section and subject to view the analysis</p>
+                </div>
+              )}
+
+              {/* Loading */}
+              {arLoading && (
+                <div className="flex items-center justify-center py-16 text-slate-400">
+                  <Loader2 className="w-8 h-8 animate-spin mr-3" /> Loading results…
+                </div>
+              )}
+
+              {/* Results grid */}
+              {!arLoading && arResults.length > 0 && (() => {
+                const TERMS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
+                const LEVEL_COLORS = [
+                  'bg-red-100 text-red-700',      // L1
+                  'bg-red-50 text-red-600',        // L2
+                  'bg-blue-50 text-blue-600',      // L3
+                  'bg-blue-100 text-blue-700',     // L4
+                  'bg-emerald-50 text-emerald-600',// L5
+                  'bg-emerald-100 text-emerald-700',// L6
+                  'bg-amber-100 text-amber-700',   // L7
+                ];
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {TERMS.map(term => {
+                      const td = computeTermStats(term);
+                      const avgScore = td.total > 0
+                        ? (arResults.filter((r: any) => r.term === term).reduce((s: number, r: any) => s + Number(r.score), 0) / td.total).toFixed(1)
+                        : null;
+                      return (
+                        <div key={term} className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                          <div className="bg-slate-800 text-white text-center py-2 text-sm font-bold tracking-wide">{term}</div>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-slate-100 text-xs text-slate-600">
+                                <th className="py-2 px-3 text-left font-bold">Level</th>
+                                <th className="py-2 px-3 text-center font-bold">Learners</th>
+                                <th className="py-2 px-3 text-center font-bold">%</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[1,2,3,4,5,6,7].map(lvl => {
+                                const count = td.counts[lvl - 1];
+                                const pct = td.total > 0 ? ((count / td.total) * 100).toFixed(1) : '0.0';
+                                return (
+                                  <tr key={lvl} className="border-t border-slate-100">
+                                    <td className="py-1.5 px-3">
+                                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${LEVEL_COLORS[lvl-1]}`}>L{lvl}</span>
+                                    </td>
+                                    <td className="py-1.5 px-3 text-center font-semibold text-slate-700">{count}</td>
+                                    <td className="py-1.5 px-3 text-center text-slate-500">{pct}%</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="border-t-2 border-slate-200 bg-slate-50">
+                                <td className="py-2 px-3 text-xs font-bold text-slate-600" colSpan={2}>Total / Avg</td>
+                                <td className="py-2 px-3 text-center text-xs font-bold text-slate-700">{avgScore ? `${avgScore}%` : '—'}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <div className="p-3 space-y-1 border-t border-slate-100 bg-slate-50">
+                            <div className="flex justify-between text-xs">
+                              <span className="text-slate-600">Level 4 and above:</span>
+                              <span className="font-bold text-blue-700">{td.l4Above} <span className="text-slate-400">({td.total > 0 ? ((td.l4Above/td.total)*100).toFixed(0) : 0}%)</span></span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-slate-600">Level 5 and above:</span>
+                              <span className="font-bold text-emerald-700">{td.l5Above} <span className="text-slate-400">({td.total > 0 ? ((td.l5Above/td.total)*100).toFixed(0) : 0}%)</span></span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* No results */}
+              {!arLoading && arGrade && arSection && arSubject && arResults.length === 0 && (
+                <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-10 text-center text-slate-400">
+                  <AlertCircle className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                  <p className="font-medium">No results found for the selected combination</p>
+                  <p className="text-sm mt-1">Results may not have been captured yet for this class and subject</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
           {selectedProfileStudent && (
             <LearnerProfile 
               student={selectedProfileStudent}
