@@ -1,6 +1,6 @@
 import Hero from '../components/Hero';
 import FeatureCard from '../components/FeatureCard';
-import { BookOpen, Users, Trophy, Globe, Zap, Heart } from 'lucide-react';
+import { BookOpen, Users, Trophy, Globe, Zap, Heart, Bell, Image as ImageIcon, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { useSchool } from '../hooks/useSchool';
@@ -38,29 +38,38 @@ const features = [
   }
 ];
 
-const news = [
+const FALLBACK_NEWS = [
   {
     title: "Science Fair 2026: Innovation at its Best",
     date: "March 15, 2026",
     category: "Events",
-    image: "https://images.unsplash.com/photo-1564910443496-5fd2d76b47fa?q=80&w=1000&auto=format&fit=crop"
+    imageUrl: "https://images.unsplash.com/photo-1564910443496-5fd2d76b47fa?q=80&w=1000&auto=format&fit=crop"
   },
   {
-    title: "Evergreen Academy Wins Regional Basketball Finals",
+    title: "School Wins Regional Basketball Finals",
     date: "March 10, 2026",
     category: "Sports",
-    image: "https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1000&auto=format&fit=crop"
+    imageUrl: "https://images.unsplash.com/photo-1546519638-68e109498ffc?q=80&w=1000&auto=format&fit=crop"
   },
   {
-    title: "New Arts Center to Open This Fall",
+    title: "New Arts Centre Opens This Term",
     date: "March 5, 2026",
     category: "Campus",
-    image: "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?q=80&w=1000&auto=format&fit=crop"
+    imageUrl: "https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?q=80&w=1000&auto=format&fit=crop"
   }
 ];
 
 export default function Home() {
   const { school } = useSchool();
+
+  const allNotices: any[] = (school as any)?.timetable_config?.notices || [];
+  const visibleNotices = allNotices.filter((n: any) => n.visible);
+  const pinnedNotices = visibleNotices.filter((n: any) => n.pinned && n.type === 'notice');
+  const regularNotices = visibleNotices.filter((n: any) => !n.pinned && n.type === 'notice');
+  const displayNotices = [...pinnedNotices, ...regularNotices].slice(0, 6);
+  const galleryItems = visibleNotices.filter((n: any) => n.type === 'gallery').slice(0, 8);
+  const useStaticFallback = displayNotices.length === 0;
+
   return (
     <main>
       <Hero />
@@ -109,51 +118,127 @@ export default function Home() {
         </div>
       </section>
 
-      {/* News Section */}
+      {/* Notices Section */}
       <section className="py-24 px-6">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-end mb-12 gap-6">
             <div className="max-w-2xl">
-              <h2 className="text-sm font-bold text-primary-600 uppercase tracking-widest mb-4">Latest News</h2>
-              <p className="text-4xl font-bold text-slate-900">Stay Updated with {school?.name || 'Evergreen Academy'}</p>
+              <h2 className="text-sm font-bold text-primary-600 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Bell className="w-4 h-4" /> Latest Notices
+              </h2>
+              <p className="text-4xl font-bold text-slate-900">Stay Updated with {school?.name || 'Our School'}</p>
             </div>
-            <button className="text-primary-600 font-bold flex items-center gap-2 hover:gap-3 transition-all">
-              View All News <BookOpen className="w-5 h-5" />
-            </button>
+            <Link to="/admissions" className="text-primary-600 font-bold flex items-center gap-2 hover:gap-3 transition-all whitespace-nowrap">
+              Apply Now <ChevronRight className="w-5 h-5" />
+            </Link>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {news.map((item, i) => (
+            {(useStaticFallback ? FALLBACK_NEWS : displayNotices.slice(0, 3)).map((item: any, i: number) => (
               <motion.div
-                key={item.title}
+                key={item.title || i}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.1 }}
                 className="group cursor-pointer"
               >
-                <div className="relative aspect-[16/10] rounded-2xl overflow-hidden mb-6">
-                  <img
-                    src={item.image}
-                    alt={item.title}
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                    referrerPolicy="no-referrer"
-                  />
+                <div className="relative aspect-[16/10] rounded-2xl overflow-hidden mb-6 bg-slate-100">
+                  {(item.imageUrl || item.image) ? (
+                    <img
+                      src={item.imageUrl || item.image}
+                      alt={item.title}
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Bell className="w-12 h-12 text-slate-300" />
+                    </div>
+                  )}
                   <div className="absolute top-4 left-4">
                     <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-primary-600 text-xs font-bold rounded-full uppercase tracking-wider">
-                      {item.category}
+                      {item.category || 'Notice'}
                     </span>
                   </div>
+                  {item.pinned && (
+                    <div className="absolute top-4 right-4">
+                      <span className="px-2 py-1 bg-amber-500 text-white text-xs font-bold rounded-full">📌 Pinned</span>
+                    </div>
+                  )}
                 </div>
                 <p className="text-sm text-slate-500 mb-2">{item.date}</p>
                 <h3 className="text-xl font-bold text-slate-900 group-hover:text-primary-600 transition-colors">
                   {item.title}
                 </h3>
+                {item.content && <p className="text-sm text-slate-500 mt-2 line-clamp-2">{item.content}</p>}
               </motion.div>
             ))}
           </div>
+
+          {/* More notices if more than 3 */}
+          {!useStaticFallback && displayNotices.length > 3 && (
+            <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayNotices.slice(3).map((item: any, i: number) => (
+                <motion.div
+                  key={item.id || i}
+                  initial={{ opacity: 0, y: 10 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.08 }}
+                  className="flex gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-primary-200 transition-colors"
+                >
+                  {item.imageUrl && <img src={item.imageUrl} alt={item.title} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" referrerPolicy="no-referrer" />}
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 text-sm line-clamp-2">{item.title}</p>
+                    <p className="text-xs text-slate-400 mt-1">{item.date}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
+
+      {/* Gallery Section — only shown when admin has posted gallery items */}
+      {galleryItems.length > 0 && (
+        <section className="py-20 px-6 bg-slate-50">
+          <div className="max-w-7xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-sm font-bold text-primary-600 uppercase tracking-widest mb-4 flex items-center justify-center gap-2">
+                <ImageIcon className="w-4 h-4" /> School Gallery
+              </h2>
+              <p className="text-4xl font-bold text-slate-900">Life at {school?.name || 'Our School'}</p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {galleryItems.map((item: any, i: number) => (
+                <motion.div
+                  key={item.id || i}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  whileInView={{ opacity: 1, scale: 1 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.05 }}
+                  className={`relative overflow-hidden rounded-2xl bg-slate-200 group ${i === 0 ? 'col-span-2 row-span-2 aspect-square' : 'aspect-square'}`}
+                >
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <ImageIcon className="w-10 h-10 text-slate-400" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
+                    <div>
+                      <p className="text-white font-bold text-sm">{item.title}</p>
+                      {item.content && <p className="text-white/70 text-xs mt-0.5 line-clamp-2">{item.content}</p>}
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* CTA Section */}
       <section className="py-24 px-6">
@@ -162,7 +247,7 @@ export default function Home() {
             <div className="relative z-10 max-w-3xl mx-auto">
               <h2 className="text-4xl md:text-6xl font-bold text-white mb-8">Ready to Join Our Community?</h2>
               <p className="text-xl text-slate-400 mb-12">
-                Admissions are now open for the 2026-2027 academic year. Schedule a campus tour or start your application today.
+                Admissions are now open for the 2026-2027 academic year. Start your application today.
               </p>
               <div className="flex flex-wrap justify-center gap-4">
                 <Link
@@ -179,7 +264,6 @@ export default function Home() {
                 </Link>
               </div>
             </div>
-            {/* Background Accents */}
             <div className="absolute top-0 right-0 w-64 h-64 bg-primary-600/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl" />
             <div className="absolute bottom-0 left-0 w-64 h-64 bg-primary-600/10 rounded-full translate-y-1/2 -translate-x-1/2 blur-3xl" />
           </div>

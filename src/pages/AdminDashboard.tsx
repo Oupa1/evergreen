@@ -40,7 +40,15 @@ import {
   Loader2,
   X,
   Menu,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Pin,
+  Eye,
+  EyeOff,
+  Send,
+  Globe,
+  History,
+  CheckCheck,
+  XCircle
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -64,7 +72,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useTheme } from '../components/ThemeProvider';
 
-type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking';
+type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -270,6 +278,21 @@ export default function AdminDashboard() {
   const [isFetchingBalance, setIsFetchingBalance] = useState(false);
   const [smsBalanceError, setSmsBalanceError] = useState<string | null>(null);
   const [selectedProfileStudent, setSelectedProfileStudent] = useState<any | null>(null);
+  // Noticeboard state
+  const [notices, setNotices] = useState<any[]>([]);
+  const [noticeTitle, setNoticeTitle] = useState('');
+  const [noticeContent, setNoticeContent] = useState('');
+  const [noticeType, setNoticeType] = useState<'notice' | 'gallery'>('notice');
+  const [noticeImageUrl, setNoticeImageUrl] = useState('');
+  const [noticePinned, setNoticePinned] = useState(false);
+  const [noticeEditId, setNoticeEditId] = useState<string | null>(null);
+  const [savingNotice, setSavingNotice] = useState(false);
+  // SMS History state
+  const [smsHistory, setSmsHistory] = useState<any[]>([]);
+  // Applications state
+  const [applications, setApplications] = useState<any[]>([]);
+  const [appStatusFilter, setAppStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('all');
+  const [processingAppId, setProcessingAppId] = useState<string | null>(null);
   const lastSMSFetchTime = useRef<number>(0);
   const lastFailedSMSConfig = useRef<string>('');
 
@@ -364,6 +387,14 @@ export default function AdminDashboard() {
       if (!response.ok) throw new Error(data.error || 'Failed to send SMS');
 
       showMessage('success', `Successfully sent ${recipients.length} messages`);
+      await saveSMSHistory({
+        id: Date.now().toString(36),
+        date: new Date().toISOString(),
+        message: smsMessage,
+        audience: smsTarget,
+        gradeName: smsTarget === 'specific-grade' ? (grades.find(g => g.id === smsSelectedGrade)?.name || '') : '',
+        recipientCount: recipients.length,
+      });
       setSmsMessage('');
       fetchSMSBalance();
     } catch (error: any) {
@@ -656,6 +687,9 @@ export default function AdminDashboard() {
           if (schoolInfoRes.data.timetable_config.emis) {
             setSchoolEmis(schoolInfoRes.data.timetable_config.emis);
           }
+          setNotices(schoolInfoRes.data.timetable_config.notices || []);
+          setSmsHistory(schoolInfoRes.data.timetable_config.sms_history || []);
+          setApplications(schoolInfoRes.data.timetable_config.applications || []);
         }
       }
       if (resPubsRes.data) setResultPublications(resPubsRes.data);
@@ -732,6 +766,119 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ── SHARED HELPER: update timetable_config JSONB ──
+  const updateTimetableConfig = async (updates: Record<string, any>) => {
+    const id = (schoolInfo as any).id;
+    if (!id) throw new Error('School record not found');
+    const current = (schoolInfo as any).timetable_config || {};
+    const merged = { ...current, ...updates };
+    const { error } = await supabase.from('schools').update({ timetable_config: merged }).eq('id', id);
+    if (error) throw error;
+    const updated = { ...schoolInfo, timetable_config: merged } as any;
+    setSchoolInfo(updated);
+    return merged;
+  };
+
+  // ── NOTICEBOARD ──
+  const handleSaveNotice = async () => {
+    if (!noticeTitle.trim()) { showMessage('error', 'Title is required'); return; }
+    setSavingNotice(true);
+    try {
+      const current: any[] = (schoolInfo as any).timetable_config?.notices || [];
+      const newId = noticeEditId || (Date.now().toString(36) + Math.random().toString(36).substr(2));
+      const existingDate = noticeEditId ? current.find((n: any) => n.id === noticeEditId)?.date : null;
+      const notice = {
+        id: newId,
+        title: noticeTitle.trim(),
+        content: noticeContent.trim(),
+        type: noticeType,
+        imageUrl: noticeImageUrl.trim(),
+        pinned: noticePinned,
+        visible: true,
+        date: existingDate || new Date().toISOString().split('T')[0],
+      };
+      const updated = noticeEditId
+        ? current.map((n: any) => n.id === noticeEditId ? notice : n)
+        : [notice, ...current];
+      await updateTimetableConfig({ notices: updated });
+      setNotices(updated);
+      setNoticeTitle(''); setNoticeContent(''); setNoticeType('notice'); setNoticeImageUrl(''); setNoticePinned(false); setNoticeEditId(null);
+      showMessage('success', noticeEditId ? 'Notice updated' : 'Notice published to website');
+    } catch (err: any) { showMessage('error', err.message); }
+    finally { setSavingNotice(false); }
+  };
+
+  const handleDeleteNotice = async (id: string) => {
+    try {
+      const current: any[] = (schoolInfo as any).timetable_config?.notices || [];
+      const updated = current.filter((n: any) => n.id !== id);
+      await updateTimetableConfig({ notices: updated });
+      setNotices(updated);
+      showMessage('success', 'Notice deleted');
+    } catch (err: any) { showMessage('error', err.message); }
+  };
+
+  const handleToggleNoticeVisibility = async (id: string) => {
+    try {
+      const current: any[] = (schoolInfo as any).timetable_config?.notices || [];
+      const updated = current.map((n: any) => n.id === id ? { ...n, visible: !n.visible } : n);
+      await updateTimetableConfig({ notices: updated });
+      setNotices(updated);
+    } catch (err: any) { showMessage('error', err.message); }
+  };
+
+  const startEditNotice = (notice: any) => {
+    setNoticeEditId(notice.id);
+    setNoticeTitle(notice.title);
+    setNoticeContent(notice.content);
+    setNoticeType(notice.type);
+    setNoticeImageUrl(notice.imageUrl || '');
+    setNoticePinned(notice.pinned || false);
+  };
+
+  // ── SMS HISTORY ──
+  const saveSMSHistory = async (record: any) => {
+    try {
+      const current: any[] = ((schoolInfo as any).timetable_config?.sms_history || []).slice(0, 99);
+      const updated = [record, ...current];
+      await updateTimetableConfig({ sms_history: updated });
+      setSmsHistory(updated);
+    } catch (err: any) { console.error('Failed to save SMS history:', err.message); }
+  };
+
+  // ── APPLICATIONS ──
+  const handleApplicationAction = async (appId: string, action: 'accepted' | 'rejected') => {
+    setProcessingAppId(appId);
+    try {
+      const current: any[] = (schoolInfo as any).timetable_config?.applications || [];
+      const app = current.find((a: any) => a.id === appId);
+      if (!app) throw new Error('Application not found');
+      const updated = current.map((a: any) => a.id === appId ? { ...a, status: action, decidedAt: new Date().toISOString() } : a);
+      await updateTimetableConfig({ applications: updated });
+      setApplications(updated);
+      // Send SMS
+      if (app.parentPhone && (schoolInfo as any).sms_config?.username && (schoolInfo as any).sms_config?.password) {
+        const schoolName = (schoolInfo as any).name || 'the school';
+        const msg = action === 'accepted'
+          ? `Dear ${app.parentName}, we are pleased to inform you that ${app.studentFirstName} ${app.studentLastName}'s application to ${schoolName} has been ACCEPTED. Please contact the school to complete enrolment. Congratulations!`
+          : `Dear ${app.parentName}, we regret to inform you that ${app.studentFirstName} ${app.studentLastName}'s application to ${schoolName} was not successful at this time. Please contact us for further information.`;
+        await fetch('/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: (schoolInfo as any).sms_config.username,
+            password: (schoolInfo as any).sms_config.password,
+            messages: [{ to: app.parentPhone, body: msg }],
+          }),
+        });
+        showMessage('success', `Application ${action} — SMS sent to parent`);
+      } else {
+        showMessage('success', `Application marked as ${action}`);
+      }
+    } catch (err: any) { showMessage('error', err.message); }
+    finally { setProcessingAppId(null); }
   };
 
   const handleGenerateTimetable = async () => {
@@ -2146,6 +2293,15 @@ export default function AdminDashboard() {
               subItems: [
                 { id: 'sms', label: 'SMS', icon: MessageSquare },
                 { id: 'sms-config', label: 'SMS Configuration', icon: Settings2 },
+                { id: 'noticeboard', label: 'Noticeboard & Gallery', icon: Bell },
+              ]
+            },
+            {
+              id: 'admissions-mgmt',
+              label: 'Admissions',
+              icon: UserPlus,
+              subItems: [
+                { id: 'applications', label: 'Applications', icon: FileText },
               ]
             },
             {
@@ -4329,6 +4485,40 @@ export default function AdminDashboard() {
                     </p>
                   </div>
                 </div>
+
+                {/* SMS History */}
+                <div className="mt-8">
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 mb-4"><History className="w-5 h-5 text-slate-500" /> SMS History</h3>
+                  {smsHistory.length === 0 ? (
+                    <div className="bg-slate-50 rounded-[1.5rem] border border-slate-200 p-8 text-center text-slate-400">
+                      <History className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                      <p className="text-sm font-medium">No messages sent yet</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="py-3 px-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date &amp; Time</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Audience</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Recipients</th>
+                            <th className="py-3 px-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Message</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {smsHistory.map((h: any, i: number) => (
+                            <tr key={h.id || i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                              <td className="py-3 px-4 text-slate-600 whitespace-nowrap">{new Date(h.date).toLocaleString('en-ZA')}</td>
+                              <td className="py-3 px-4 text-slate-700 capitalize">{h.audience === 'specific-grade' ? `Grade: ${h.gradeName}` : h.audience?.replace(/-/g, ' ')}</td>
+                              <td className="py-3 px-4 text-center font-bold text-slate-900">{h.recipientCount}</td>
+                              <td className="py-3 px-4 text-slate-600 max-w-xs truncate">{h.message}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -5638,6 +5828,170 @@ export default function AdminDashboard() {
                 </motion.div>
               </div>
             )}
+            {/* ── NOTICEBOARD & GALLERY TAB ── */}
+            {activeTab === 'noticeboard' && (
+              <motion.div key="noticeboard" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6 p-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Bell className="w-6 h-6 text-primary-600" /> Noticeboard &amp; Gallery</h2>
+                  <p className="text-sm text-slate-500 mt-1">Notices and gallery items posted here will appear on the public website</p>
+                </div>
+
+                {/* Form */}
+                <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4">{noticeEditId ? 'Edit Notice / Gallery Item' : 'Post New Notice / Gallery Item'}</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Title *</label>
+                      <input value={noticeTitle} onChange={e => setNoticeTitle(e.target.value)} placeholder="Notice or gallery item title"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Type</label>
+                      <select value={noticeType} onChange={e => setNoticeType(e.target.value as any)}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400">
+                        <option value="notice">📢 Notice</option>
+                        <option value="gallery">🖼️ Gallery</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Image URL (optional)</label>
+                      <input value={noticeImageUrl} onChange={e => setNoticeImageUrl(e.target.value)} placeholder="https://..."
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400" />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Content / Description</label>
+                      <textarea value={noticeContent} onChange={e => setNoticeContent(e.target.value)} rows={3} placeholder="Write the notice content or gallery caption..."
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 resize-none" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" id="noticePinned" checked={noticePinned} onChange={e => setNoticePinned(e.target.checked)} className="w-4 h-4 accent-primary-600" />
+                      <label htmlFor="noticePinned" className="text-sm text-slate-700">Pin to top of website</label>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-4">
+                    <button onClick={handleSaveNotice} disabled={savingNotice || !noticeTitle.trim()}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white rounded-2xl text-sm font-bold hover:bg-primary-700 transition-all shadow-sm disabled:opacity-50">
+                      {savingNotice ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {noticeEditId ? 'Update' : 'Publish'}
+                    </button>
+                    {noticeEditId && (
+                      <button onClick={() => { setNoticeEditId(null); setNoticeTitle(''); setNoticeContent(''); setNoticeType('notice'); setNoticeImageUrl(''); setNoticePinned(false); }}
+                        className="px-5 py-2.5 border border-slate-200 rounded-2xl text-sm font-bold hover:bg-slate-50">
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notices list */}
+                {notices.length === 0 ? (
+                  <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-10 text-center text-slate-400">
+                    <Bell className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">No notices or gallery items yet</p>
+                    <p className="text-sm mt-1">Post your first notice above and it will appear on the school website</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {[...notices].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)).map((n: any) => (
+                      <div key={n.id} className={`bg-white rounded-[1.5rem] border ${n.pinned ? 'border-amber-200 shadow-amber-100' : 'border-slate-200'} shadow-sm p-4 flex gap-4`}>
+                        {n.imageUrl && <img src={n.imageUrl} alt={n.title} className="w-20 h-20 object-cover rounded-xl flex-shrink-0" referrerPolicy="no-referrer" />}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            {n.pinned && <span className="flex items-center gap-1 text-xs font-bold text-amber-600"><Pin className="w-3 h-3" /> Pinned</span>}
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${n.type === 'gallery' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{n.type === 'gallery' ? '🖼️ Gallery' : '📢 Notice'}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${n.visible ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{n.visible ? 'Visible' : 'Hidden'}</span>
+                          </div>
+                          <p className="font-bold text-slate-900 text-sm">{n.title}</p>
+                          {n.content && <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{n.content}</p>}
+                          <p className="text-xs text-slate-400 mt-1">{n.date}</p>
+                        </div>
+                        <div className="flex flex-col gap-2 flex-shrink-0">
+                          <button onClick={() => handleToggleNoticeVisibility(n.id)} title={n.visible ? 'Hide' : 'Show'} className="p-2 rounded-xl hover:bg-slate-100 text-slate-500">
+                            {n.visible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                          </button>
+                          <button onClick={() => startEditNotice(n)} title="Edit" className="p-2 rounded-xl hover:bg-slate-100 text-slate-500">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeleteNotice(n.id)} title="Delete" className="p-2 rounded-xl hover:bg-red-50 text-red-500">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── APPLICATIONS TAB ── */}
+            {activeTab === 'applications' && (
+              <motion.div key="applications" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6 p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><UserPlus className="w-6 h-6 text-primary-600" /> Admissions Applications</h2>
+                    <p className="text-sm text-slate-500 mt-1">Applications submitted via the school website. Accept or reject — an SMS is sent to the parent.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    {(['all','pending','accepted','rejected'] as const).map(f => (
+                      <button key={f} onClick={() => setAppStatusFilter(f)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize transition-all ${appStatusFilter === f ? 'bg-primary-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        {f} {f !== 'all' && <span className="ml-1 opacity-70">({applications.filter((a:any) => a.status === f).length})</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {applications.filter((a:any) => appStatusFilter === 'all' || a.status === appStatusFilter).length === 0 ? (
+                  <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-12 text-center text-slate-400">
+                    <UserPlus className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">No {appStatusFilter !== 'all' ? appStatusFilter : ''} applications yet</p>
+                    <p className="text-sm mt-1">Applications submitted on the public Admissions page will appear here</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {applications
+                      .filter((a: any) => appStatusFilter === 'all' || a.status === appStatusFilter)
+                      .sort((a: any, b: any) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+                      .map((app: any) => (
+                        <div key={app.id} className="bg-white rounded-[1.5rem] border border-slate-200 shadow-sm p-5">
+                          <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 text-sm">
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Student</span><p className="font-bold text-slate-900">{app.studentFirstName} {app.studentLastName}</p></div>
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Date of Birth</span><p className="text-slate-700">{app.dateOfBirth}</p></div>
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Grade Applying</span><p className="text-slate-700">{app.gradeApplying}</p></div>
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Parent / Guardian</span><p className="text-slate-700">{app.parentName}</p></div>
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Parent Phone</span><p className="text-slate-700">{app.parentPhone || '—'}</p></div>
+                              <div><span className="text-xs text-slate-400 uppercase font-bold">Parent Email</span><p className="text-slate-700">{app.parentEmail || '—'}</p></div>
+                              {app.additionalInfo && <div className="sm:col-span-2 lg:col-span-3"><span className="text-xs text-slate-400 uppercase font-bold">Additional Info</span><p className="text-slate-600 text-xs">{app.additionalInfo}</p></div>}
+                            </div>
+                            <div className="flex flex-col gap-2 items-end">
+                              <span className={`px-3 py-1 rounded-full text-xs font-bold capitalize ${app.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' : app.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {app.status}
+                              </span>
+                              <p className="text-xs text-slate-400">{new Date(app.submittedAt).toLocaleDateString()}</p>
+                              {app.status === 'pending' && (
+                                <div className="flex gap-2 mt-1">
+                                  <button onClick={() => handleApplicationAction(app.id, 'accepted')} disabled={processingAppId === app.id}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
+                                    {processingAppId === app.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />} Accept
+                                  </button>
+                                  <button onClick={() => handleApplicationAction(app.id, 'rejected')} disabled={processingAppId === app.id}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold hover:bg-red-700 disabled:opacity-50">
+                                    {processingAppId === app.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />} Reject
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* SMS History section - rendered inside the SMS tab */}
+
             {selectedProfileStudent && (
               <LearnerProfile 
                 student={selectedProfileStudent}
