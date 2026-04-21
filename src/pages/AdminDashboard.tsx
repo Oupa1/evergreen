@@ -1761,11 +1761,22 @@ export default function AdminDashboard() {
   const handleLlPrint = () => {
     const subjectName = subjects.find(s => s.id === llSubject)?.name || '—';
     const gradeName = llGrade ? grades.find(g => g.id === llGrade)?.name : 'All Grades';
-    const levelLabel = llLevel === 'all' ? 'All Levels' : `Level ${llLevel}`;
+    const levelLabel = llLevel === 'all' ? 'All Levels'
+      : llLevel === '7' ? 'L7 — Outstanding (80–100%)'
+      : llLevel === '5-6' ? 'L5–6 — Substantial / Meritorious (60–79%)'
+      : llLevel === '3-4' ? 'L3–4 — Moderate / Adequate (40–59%)'
+      : llLevel === '1-2' ? 'L1–2 — Not Achieved / Elementary (0–39%)'
+      : llLevel;
     const filteredResults = llResults
       .filter((r: any) => {
         if (llGrade && r.students?.sections?.grade_id !== llGrade) return false;
-        if (llLevel !== 'all' && getLevel(Number(r.score)).level !== parseInt(llLevel)) return false;
+        if (llLevel !== 'all') {
+          const lvl = getLevel(Number(r.score)).level;
+          if (llLevel === '7' && lvl !== 7) return false;
+          if (llLevel === '5-6' && (lvl < 5 || lvl > 6)) return false;
+          if (llLevel === '3-4' && (lvl < 3 || lvl > 4)) return false;
+          if (llLevel === '1-2' && lvl > 2) return false;
+        }
         return true;
       })
       .sort((a: any, b: any) =>
@@ -3312,17 +3323,14 @@ export default function AdminDashboard() {
                       {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   )},
-                  { label: 'Level', content: (
+                  { label: 'Level Group', content: (
                     <select value={llLevel} onChange={(e) => setLlLevel(e.target.value)}
                       className="px-3 py-2 w-full bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-primary-500 focus:outline-none">
                       <option value="all">All Levels</option>
-                      <option value="7">L7 — Outstanding (80-100%)</option>
-                      <option value="6">L6 — Meritorious (70-79%)</option>
-                      <option value="5">L5 — Substantial (60-69%)</option>
-                      <option value="4">L4 — Adequate (50-59%)</option>
-                      <option value="3">L3 — Moderate (40-49%)</option>
-                      <option value="2">L2 — Elementary (30-39%)</option>
-                      <option value="1">L1 — Not Achieved (0-29%)</option>
+                      <option value="7">L7 — Outstanding (80–100%)</option>
+                      <option value="5-6">L5–6 — Substantial / Meritorious (60–79%)</option>
+                      <option value="3-4">L3–4 — Moderate / Adequate (40–59%)</option>
+                      <option value="1-2">L1–2 — Not Achieved / Elementary (0–39%)</option>
                     </select>
                   )},
                   { label: 'Term', content: (
@@ -3361,7 +3369,13 @@ export default function AdminDashboard() {
                 const filteredLlResults = llResults
                   .filter(r => {
                     if (llGrade && r.students?.sections?.grade_id !== llGrade) return false;
-                    if (llLevel !== 'all' && getLevel(Number(r.score)).level !== parseInt(llLevel)) return false;
+                    if (llLevel !== 'all') {
+                      const lvl = getLevel(Number(r.score)).level;
+                      if (llLevel === '7' && lvl !== 7) return false;
+                      if (llLevel === '5-6' && (lvl < 5 || lvl > 6)) return false;
+                      if (llLevel === '3-4' && (lvl < 3 || lvl > 4)) return false;
+                      if (llLevel === '1-2' && lvl > 2) return false;
+                    }
                     return true;
                   })
                   .sort((a: any, b: any) => {

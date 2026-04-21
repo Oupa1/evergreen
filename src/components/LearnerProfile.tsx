@@ -305,36 +305,111 @@ export default function LearnerProfile({ student, results: initialResults, subje
                 </div>
               </div>
 
-              {/* Subject Breakdown */}
+              {/* Subject Breakdown — grouped by level band */}
               <div>
                 <h3 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-3">
                   <FileText className="w-6 h-6 text-primary-600" />
-                  Subject Performance Breakdown
+                  Subject Performance by Level Group
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {studentSubjects.map((s, i) => (
-                    <div key={i} className={`p-6 rounded-3xl border transition-all hover:shadow-md ${getMarkBg(s.score)}`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className="font-bold text-slate-900">{s.name}</h4>
-                          <p className="text-xs text-slate-500 mt-1">Average Performance</p>
-                        </div>
-                        <div className="text-right">
-                          <span className={`text-2xl font-bold ${getMarkColor(s.score)}`}>
-                            {s.score.toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                      <div className="mt-4 h-2 bg-white/50 rounded-full overflow-hidden">
-                        <motion.div 
-                          initial={{ width: 0 }}
-                          animate={{ width: `${s.score}%` }}
-                          className={`h-full ${getMarkColor(s.score).replace('text-', 'bg-')}`}
-                        />
-                      </div>
+                {(() => {
+                  const levelGroups = [
+                    {
+                      key: '7',
+                      label: 'Outstanding Achievement',
+                      sub: 'Level 7',
+                      range: '80–100%',
+                      filter: (s: any) => s.score >= 80,
+                      headerCls: 'bg-amber-500 text-white',
+                      cardCls: 'bg-amber-50 border-amber-200',
+                      barCls: 'bg-amber-500',
+                      scoreCls: 'text-amber-600',
+                      badgeCls: 'bg-amber-100 text-amber-700',
+                    },
+                    {
+                      key: '5-6',
+                      label: 'Substantial / Meritorious',
+                      sub: 'Levels 5–6',
+                      range: '60–79%',
+                      filter: (s: any) => s.score >= 60 && s.score < 80,
+                      headerCls: 'bg-emerald-600 text-white',
+                      cardCls: 'bg-emerald-50 border-emerald-200',
+                      barCls: 'bg-emerald-500',
+                      scoreCls: 'text-emerald-600',
+                      badgeCls: 'bg-emerald-100 text-emerald-700',
+                    },
+                    {
+                      key: '3-4',
+                      label: 'Moderate / Adequate',
+                      sub: 'Levels 3–4',
+                      range: '40–59%',
+                      filter: (s: any) => s.score >= 40 && s.score < 60,
+                      headerCls: 'bg-blue-600 text-white',
+                      cardCls: 'bg-blue-50 border-blue-200',
+                      barCls: 'bg-blue-500',
+                      scoreCls: 'text-blue-600',
+                      badgeCls: 'bg-blue-100 text-blue-700',
+                    },
+                    {
+                      key: '1-2',
+                      label: 'Not Achieved / Elementary',
+                      sub: 'Levels 1–2',
+                      range: '0–39%',
+                      filter: (s: any) => s.score < 40,
+                      headerCls: 'bg-red-500 text-white',
+                      cardCls: 'bg-red-50 border-red-200',
+                      barCls: 'bg-red-500',
+                      scoreCls: 'text-red-600',
+                      badgeCls: 'bg-red-100 text-red-700',
+                    },
+                  ];
+                  const populated = levelGroups.filter(g => studentSubjects.some(g.filter));
+                  if (populated.length === 0) return (
+                    <p className="text-slate-400 text-sm">No subject results available.</p>
+                  );
+                  return (
+                    <div className="space-y-5">
+                      {levelGroups.map(group => {
+                        const subs = studentSubjects.filter(group.filter);
+                        if (subs.length === 0) return null;
+                        return (
+                          <div key={group.key} className="rounded-3xl border overflow-hidden" style={{ borderColor: 'transparent' }}>
+                            <div className={`flex items-center justify-between px-5 py-3 ${group.headerCls}`}>
+                              <div>
+                                <span className="font-black text-sm tracking-wide">{group.label}</span>
+                                <span className="ml-2 text-xs opacity-75">({group.sub})</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs opacity-75">{group.range}</span>
+                                <span className="bg-white/20 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">{subs.length} subject{subs.length !== 1 ? 's' : ''}</span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-white border border-t-0 border-slate-100 rounded-b-3xl">
+                              {subs.map((s, i) => (
+                                <div key={i} className={`p-5 rounded-2xl border transition-all hover:shadow-sm ${group.cardCls}`}>
+                                  <div className="flex items-center justify-between mb-3">
+                                    <div>
+                                      <h4 className="font-bold text-slate-900 text-sm">{s.name}</h4>
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${group.badgeCls}`}>{group.sub}</span>
+                                    </div>
+                                    <span className={`text-2xl font-black ${group.scoreCls}`}>{s.score.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="h-1.5 bg-white/70 rounded-full overflow-hidden">
+                                    <motion.div
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${Math.min(s.score, 100)}%` }}
+                                      transition={{ duration: 0.8, ease: 'easeOut' }}
+                                      className={`h-full rounded-full ${group.barCls}`}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
             </>
           )}
