@@ -27,14 +27,17 @@ import {
   Brain,
   Trash2,
   Menu,
-  Printer
+  Printer,
+  Sparkles,
+  BookMarked,
+  ChevronDown
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import LearnerProfile from '../components/LearnerProfile';
-import { generateQuizFromImage } from '../lib/gemini';
+import { generateQuizFromImage, generateCAPSLessonPlan } from '../lib/gemini';
 
-type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking';
+type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking' | 'lesson-plan';
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
@@ -101,6 +104,15 @@ export default function TeacherDashboard() {
   const [srYear, setSrYear] = useState(new Date().getFullYear().toString());
   const [srResults, setSrResults] = useState<any[]>([]);
   const [srLoading, setSrLoading] = useState(false);
+  const [lpSubject, setLpSubject] = useState('');
+  const [lpGrade, setLpGrade] = useState('');
+  const [lpTerm, setLpTerm] = useState('Term 1');
+  const [lpWeek, setLpWeek] = useState(1);
+  const [lpDuration, setLpDuration] = useState(40);
+  const [lpTopic, setLpTopic] = useState('');
+  const [lpLoading, setLpLoading] = useState(false);
+  const [lpPlan, setLpPlan] = useState<any>(null);
+  const [lpError, setLpError] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [resultsView, setResultsView] = useState<'schedule' | 'subject'>('schedule');
   const [resultsSelectedTerm, setResultsSelectedTerm] = useState('Term 1');
@@ -717,6 +729,166 @@ export default function TeacherDashboard() {
     setTimeout(() => { win.print(); }, 400);
   };
 
+  const handleLpGenerate = async () => {
+    if (!lpSubject || !lpGrade) {
+      setLpError('Please select a subject and grade before generating.');
+      return;
+    }
+    setLpError('');
+    setLpLoading(true);
+    setLpPlan(null);
+    try {
+      const subjectName = subjects.find((s: any) => s.id === lpSubject)?.name || lpSubject;
+      const gradeName = grades.find((g: any) => g.id === lpGrade)?.name || lpGrade;
+      const plan = await generateCAPSLessonPlan(
+        subjectName,
+        gradeName,
+        lpTerm,
+        lpWeek,
+        lpDuration,
+        lpTopic.trim() || undefined
+      );
+      setLpPlan(plan);
+    } catch (err: any) {
+      setLpError(err.message || 'Failed to generate lesson plan. Please try again.');
+    } finally {
+      setLpLoading(false);
+    }
+  };
+
+  const handleLpPrint = () => {
+    if (!lpPlan) return;
+    const subjectName = subjects.find((s: any) => s.id === lpSubject)?.name || lpSubject;
+    const gradeName = grades.find((g: any) => g.id === lpGrade)?.name || lpGrade;
+
+    const phasesHtml = (lpPlan.phases || []).map((phase: any) => `
+      <div class="phase">
+        <div class="phase-header">
+          <span class="phase-name">${phase.name}</span>
+          <span class="phase-duration">${phase.duration}</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <div class="col-label">Teacher Activities</div>
+            <ul>${(phase.teacherActivities || []).map((a: string) => `<li>${a}</li>`).join('')}</ul>
+          </div>
+          <div class="phase-col">
+            <div class="col-label">Learner Activities</div>
+            <ul>${(phase.learnerActivities || []).map((a: string) => `<li>${a}</li>`).join('')}</ul>
+          </div>
+        </div>
+      </div>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CAPS Lesson Plan</title>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:Arial,sans-serif;padding:28px;font-size:11px;color:#111;max-width:900px;margin:0 auto}
+      .header{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-bottom:14px;border-bottom:3px solid #059669}
+      .header img{width:60px;height:60px;object-fit:contain;border-radius:8px;border:1px solid #e2e8f0}
+      h1{font-size:20px;margin:0 0 2px;color:#059669}
+      h2{font-size:12px;font-weight:normal;color:#555;margin:0}
+      .caps-badge{display:inline-block;background:#059669;color:#fff;font-size:9px;font-weight:bold;padding:2px 8px;border-radius:12px;letter-spacing:.08em;margin-top:4px}
+      .info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px}
+      .info-item .label{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;font-weight:bold}
+      .info-item .value{font-size:12px;font-weight:bold;color:#111;margin-top:2px}
+      .section{margin-bottom:14px}
+      .section-title{font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:.07em;color:#059669;border-bottom:1px solid #d1fae5;padding-bottom:4px;margin-bottom:8px}
+      .objectives li, .resources li{margin-bottom:3px}
+      .phase{border:1px solid #e2e8f0;border-radius:6px;margin-bottom:8px;overflow:hidden}
+      .phase-header{display:flex;justify-content:space-between;align-items:center;background:#1e293b;color:#fff;padding:6px 12px}
+      .phase-name{font-size:11px;font-weight:bold}
+      .phase-duration{font-size:10px;opacity:.75;background:rgba(255,255,255,.15);padding:1px 8px;border-radius:10px}
+      .phase-body{display:grid;grid-template-columns:1fr 1fr;gap:0}
+      .phase-col{padding:8px 12px}
+      .phase-col:first-child{border-right:1px solid #e2e8f0}
+      .col-label{font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-bottom:4px}
+      .phase-col ul{margin:0;padding-left:14px}
+      .phase-col li{margin-bottom:2px}
+      .two-col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .assessment-box,.diff-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px}
+      .tag{display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:9px;padding:2px 6px;border-radius:4px;margin:2px}
+      .reflect-box{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;font-style:italic;color:#78350f}
+      .footer{margin-top:20px;font-size:9px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;display:flex;justify-content:space-between}
+    </style></head><body>
+    <div class="header">
+      ${schoolInfo?.logo ? `<img src="${schoolInfo.logo}" alt="Logo" />` : ''}
+      <div>
+        <h1>${schoolInfo?.name || 'School'}</h1>
+        ${schoolEmis ? `<p style="font-size:10px;color:#64748b;margin:1px 0">EMIS: ${schoolEmis}</p>` : ''}
+        <h2>CAPS Lesson Plan</h2>
+        <span class="caps-badge">CAPS ALIGNED</span>
+      </div>
+    </div>
+    <div class="info-grid">
+      <div class="info-item"><div class="label">Subject</div><div class="value">${subjectName}</div></div>
+      <div class="info-item"><div class="label">Grade</div><div class="value">${gradeName}</div></div>
+      <div class="info-item"><div class="label">Term</div><div class="value">${lpTerm}</div></div>
+      <div class="info-item"><div class="label">Week</div><div class="value">${lpWeek}</div></div>
+      <div class="info-item"><div class="label">Duration</div><div class="value">${lpDuration} minutes</div></div>
+      <div class="info-item"><div class="label">Date</div><div class="value">${new Date().toLocaleDateString('en-ZA')}</div></div>
+    </div>
+    <div class="section">
+      <div class="section-title">CAPS Alignment</div>
+      <p><strong>Topic:</strong> ${lpPlan.capsAlignment?.topic || '—'}</p>
+      <p><strong>Sub-Topic:</strong> ${lpPlan.capsAlignment?.subTopic || '—'}</p>
+      <p><strong>Strand / Content Area:</strong> ${lpPlan.capsAlignment?.strand || '—'}</p>
+    </div>
+    <div class="section">
+      <div class="section-title">Prior Knowledge</div>
+      <p>${lpPlan.priorKnowledge || '—'}</p>
+    </div>
+    <div class="section">
+      <div class="section-title">Learning Objectives</div>
+      <ul class="objectives">${(lpPlan.learningObjectives || []).map((o: string) => `<li>${o}</li>`).join('')}</ul>
+    </div>
+    <div class="section">
+      <div class="section-title">Resources</div>
+      <ul class="resources">${(lpPlan.resources || []).map((r: string) => `<li>${r}</li>`).join('')}</ul>
+    </div>
+    <div class="section">
+      <div class="section-title">Lesson Phases</div>
+      ${phasesHtml}
+    </div>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-title">Assessment</div>
+        <div class="assessment-box">
+          <p><strong>Type:</strong> ${lpPlan.assessment?.type || 'Formative'}</p>
+          <p><strong>Methods:</strong></p>
+          <div>${(lpPlan.assessment?.methods || []).map((m: string) => `<span class="tag">${m}</span>`).join('')}</div>
+          <p style="margin-top:8px"><strong>Success Criteria:</strong></p>
+          <ul>${(lpPlan.assessment?.successCriteria || []).map((c: string) => `<li>${c}</li>`).join('')}</ul>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Differentiation</div>
+        <div class="diff-box">
+          <p><strong>Support:</strong> ${lpPlan.differentiation?.support || '—'}</p>
+          <p style="margin-top:6px"><strong>Extension:</strong> ${lpPlan.differentiation?.extension || '—'}</p>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Homework</div>
+      <p>${lpPlan.homework || 'No homework assigned.'}</p>
+    </div>
+    <div class="section">
+      <div class="section-title">Teacher Reflection (Complete after lesson)</div>
+      <div class="reflect-box">${lpPlan.teacherReflection || '—'}</div>
+    </div>
+    <div class="footer">
+      <span>Prepared by: ${teacher?.first_name ? teacher.first_name + ' ' + (teacher.last_name || '') : 'Teacher'}</span>
+      <span>Printed: ${new Date().toLocaleString('en-ZA')}</span>
+    </div>
+    </body></html>`;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 400);
+  };
+
   const getTeacherRecommendations = () => {
     if (results.length === 0) return [];
 
@@ -848,6 +1020,7 @@ export default function TeacherDashboard() {
             { id: 'attendance', icon: ClipboardList, label: 'Attendance' },
             { id: 'timetable', icon: Calendar, label: 'Timetable' },
             { id: 'meetings', icon: Bell, label: 'Meetings' },
+            { id: 'lesson-plan', icon: BookMarked, label: 'Lesson Plan' },
             { id: 'materials', icon: FileText, label: 'Materials' },
           ].map((item) => (
             <button
@@ -1972,6 +2145,210 @@ export default function TeacherDashboard() {
                               })}
                             </tbody>
                           </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </motion.div>
+            )}
+
+            {/* ── LESSON PLAN TAB ── */}
+            {activeTab === 'lesson-plan' && (
+              <motion.div key="lesson-plan" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                      <BookMarked className="w-6 h-6 text-emerald-600" />
+                      CAPS Lesson Plan Generator
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">Automatically generate a structured, CAPS-aligned lesson plan using AI</p>
+                  </div>
+                  {lpPlan && (
+                    <button onClick={handleLpPrint} className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-2xl text-sm font-bold hover:bg-slate-700 transition-all shadow-sm">
+                      <Printer className="w-4 h-4" /> Print Lesson Plan
+                    </button>
+                  )}
+                </div>
+
+                {/* Filters */}
+                <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Sparkles className="w-4 h-4 text-emerald-500" /> Lesson Details</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Subject</label>
+                      <select value={lpSubject} onChange={e => setLpSubject(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <option value="">Select...</option>
+                        {subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Grade</label>
+                      <select value={lpGrade} onChange={e => setLpGrade(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        <option value="">Select...</option>
+                        {grades.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Term</label>
+                      <select value={lpTerm} onChange={e => setLpTerm(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        {['Term 1','Term 2','Term 3','Term 4'].map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Week</label>
+                      <input type="number" min={1} max={12} value={lpWeek} onChange={e => setLpWeek(Number(e.target.value))} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Duration (min)</label>
+                      <input type="number" min={20} max={120} step={5} value={lpDuration} onChange={e => setLpDuration(Number(e.target.value))} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Topic (optional)</label>
+                      <input type="text" value={lpTopic} onChange={e => setLpTopic(e.target.value)} placeholder="e.g. Fractions" className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                    </div>
+                  </div>
+                  {lpError && <p className="text-sm text-red-600 mb-3 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{lpError}</p>}
+                  <button
+                    onClick={handleLpGenerate}
+                    disabled={lpLoading}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-2xl font-bold text-sm hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-lg shadow-emerald-600/20"
+                  >
+                    {lpLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating CAPS plan...</> : <><Sparkles className="w-4 h-4" /> Generate Lesson Plan</>}
+                  </button>
+                  {!lpLoading && !lpPlan && (
+                    <p className="text-xs text-slate-400 mt-2">Leave Topic blank to let AI choose the appropriate CAPS topic for the selected term and week.</p>
+                  )}
+                </div>
+
+                {/* Generated Plan */}
+                {lpPlan && (() => {
+                  const plan = lpPlan;
+                  const subjectName = subjects.find((s: any) => s.id === lpSubject)?.name || lpSubject;
+                  const gradeName = grades.find((g: any) => g.id === lpGrade)?.name || lpGrade;
+                  const phaseColors = ['bg-sky-600','bg-violet-600','bg-amber-600','bg-emerald-600'];
+                  return (
+                    <div className="space-y-4">
+                      {/* CAPS Alignment Banner */}
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-[2rem] p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="w-10 h-10 bg-emerald-600 rounded-2xl flex items-center justify-center flex-shrink-0">
+                            <BookMarked className="w-5 h-5 text-white" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <span className="text-xs bg-emerald-600 text-white font-bold px-3 py-0.5 rounded-full uppercase tracking-wide">CAPS Aligned</span>
+                              <span className="text-xs text-slate-500">{subjectName} · {gradeName} · {lpTerm} · Week {lpWeek} · {lpDuration} min</span>
+                            </div>
+                            <h3 className="text-lg font-black text-slate-900">{plan.capsAlignment?.topic}</h3>
+                            <p className="text-sm text-emerald-700 font-medium">{plan.capsAlignment?.subTopic}</p>
+                            <p className="text-xs text-slate-500 mt-1">Strand: {plan.capsAlignment?.strand}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Prior Knowledge + Objectives */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                          <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Prior Knowledge</h4>
+                          <p className="text-sm text-slate-700 leading-relaxed">{plan.priorKnowledge}</p>
+                        </div>
+                        <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                          <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Learning Objectives</h4>
+                          <ul className="space-y-1.5">
+                            {(plan.learningObjectives || []).map((obj: string, i: number) => (
+                              <li key={i} className="flex gap-2 text-sm text-slate-700">
+                                <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                                <span>{obj}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Resources */}
+                      <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Resources Needed</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {(plan.resources || []).map((r: string, i: number) => (
+                            <span key={i} className="px-3 py-1 bg-slate-100 text-slate-700 rounded-full text-xs font-medium">{r}</span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Lesson Phases */}
+                      <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                        <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-4">Lesson Phases</h4>
+                        <div className="space-y-3">
+                          {(plan.phases || []).map((phase: any, i: number) => (
+                            <div key={i} className="border border-slate-200 rounded-2xl overflow-hidden">
+                              <div className={`flex items-center justify-between px-4 py-2.5 ${phaseColors[i % phaseColors.length]}`}>
+                                <span className="text-sm font-bold text-white">{phase.name}</span>
+                                <span className="text-xs text-white/75 bg-white/10 px-2.5 py-0.5 rounded-full">{phase.duration}</span>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                                <div className="p-4">
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Teacher Activities</p>
+                                  <ul className="space-y-1">
+                                    {(phase.teacherActivities || []).map((a: string, j: number) => (
+                                      <li key={j} className="flex gap-2 text-xs text-slate-600"><span className="text-slate-400 flex-shrink-0">›</span>{a}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                                <div className="p-4 bg-slate-50/50">
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Learner Activities</p>
+                                  <ul className="space-y-1">
+                                    {(phase.learnerActivities || []).map((a: string, j: number) => (
+                                      <li key={j} className="flex gap-2 text-xs text-slate-600"><span className="text-slate-400 flex-shrink-0">›</span>{a}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Assessment + Differentiation */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                          <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Assessment</h4>
+                          <p className="text-xs text-slate-500 mb-2">Type: <span className="font-bold text-slate-700">{plan.assessment?.type}</span></p>
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {(plan.assessment?.methods || []).map((m: string, i: number) => (
+                              <span key={i} className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full text-[11px] font-medium">{m}</span>
+                            ))}
+                          </div>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Success Criteria</p>
+                          <ul className="space-y-1">
+                            {(plan.assessment?.successCriteria || []).map((c: string, i: number) => (
+                              <li key={i} className="flex gap-2 text-xs text-slate-600"><CheckCircle className="w-3 h-3 text-blue-400 flex-shrink-0 mt-0.5" />{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                          <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">Differentiation</h4>
+                          <div className="mb-3">
+                            <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">Support</p>
+                            <p className="text-xs text-slate-600">{plan.differentiation?.support}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black text-violet-500 uppercase tracking-widest mb-1">Extension</p>
+                            <p className="text-xs text-slate-600">{plan.differentiation?.extension}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Homework + Reflection */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-white rounded-[2rem] border border-slate-200 p-5">
+                          <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Homework</h4>
+                          <p className="text-sm text-slate-700">{plan.homework}</p>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-[2rem] p-5">
+                          <h4 className="text-xs font-black text-amber-600 uppercase tracking-widest mb-2">Teacher Reflection (after lesson)</h4>
+                          <p className="text-xs text-amber-800 italic leading-relaxed">{plan.teacherReflection}</p>
                         </div>
                       </div>
                     </div>

@@ -35,6 +35,100 @@ export async function generateLearnerReport(studentName: string, subjects: any[]
   }
 }
 
+export async function generateCAPSLessonPlan(
+  subject: string,
+  grade: string,
+  term: string,
+  week: number,
+  duration: number,
+  topic?: string
+) {
+  if (!apiKey) {
+    throw new Error("AI lesson plan generation is currently unavailable. Please configure the Gemini API key.");
+  }
+
+  const model = "gemini-3-flash-preview";
+  const topicInstruction = topic
+    ? `The teacher wants to focus on this topic/concept: "${topic}". Use this as the primary CAPS-aligned topic.`
+    : `Automatically determine the appropriate CAPS topic and sub-topic for ${subject} Grade ${grade} ${term} Week ${week}.`;
+
+  const prompt = `You are an expert South African educator specialising in the CAPS (Curriculum and Assessment Policy Statement) curriculum.
+
+Generate a detailed, professionally structured CAPS-aligned lesson plan for:
+- Subject: ${subject}
+- Grade: ${grade}
+- Term: ${term}
+- Week: ${week}
+- Duration: ${duration} minutes
+- ${topicInstruction}
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code fences):
+{
+  "capsAlignment": {
+    "topic": "Exact CAPS topic name",
+    "subTopic": "Specific sub-topic or concept",
+    "strand": "The CAPS content area/strand"
+  },
+  "priorKnowledge": "What learners should already know before this lesson",
+  "learningObjectives": [
+    "By the end of this lesson, learners will be able to...",
+    "Learners will demonstrate...",
+    "Learners will apply..."
+  ],
+  "resources": ["CAPS-approved textbook", "Whiteboard", "Worksheets", "..."],
+  "phases": [
+    {
+      "name": "Introduction / Activation of Prior Knowledge",
+      "duration": "5 minutes",
+      "teacherActivities": ["Greet learners and settle the class", "Ask a warm-up question related to prior knowledge", "..."],
+      "learnerActivities": ["Respond to teacher questions", "Share prior knowledge", "..."]
+    },
+    {
+      "name": "Lesson Development / Direct Instruction",
+      "duration": "${Math.round(duration * 0.55)} minutes",
+      "teacherActivities": ["Introduce the new concept with examples", "Use the board to demonstrate", "Explain key terminology", "..."],
+      "learnerActivities": ["Listen and take notes", "Complete guided examples in their workbooks", "Ask clarifying questions", "..."]
+    },
+    {
+      "name": "Guided Practice",
+      "duration": "${Math.round(duration * 0.25)} minutes",
+      "teacherActivities": ["Provide practice exercises", "Circulate and provide support", "Address misconceptions", "..."],
+      "learnerActivities": ["Complete practice tasks", "Work in pairs or small groups", "Check each other's work", "..."]
+    },
+    {
+      "name": "Consolidation / Conclusion",
+      "duration": "5 minutes",
+      "teacherActivities": ["Summarise key points", "Check for understanding using questioning", "Set homework", "..."],
+      "learnerActivities": ["Respond to consolidation questions", "Write down homework", "Reflect on learning", "..."]
+    }
+  ],
+  "assessment": {
+    "type": "Formative",
+    "methods": ["Observation during activities", "Questioning technique", "Classwork marking"],
+    "successCriteria": ["Learner can correctly...", "Learner demonstrates understanding of...", "..."]
+  },
+  "homework": "Brief description of homework task or 'No formal homework — learners complete classwork'",
+  "differentiation": {
+    "support": "Specific strategies and modified tasks for learners who need extra support",
+    "extension": "Enrichment activities for learners who complete work early or need more challenge"
+  },
+  "teacherReflection": "What worked well? What would I change? Were the objectives achieved?"
+}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+    });
+    const text = response.text || '';
+    const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error("Gemini Lesson Plan Error:", error);
+    throw new Error("Failed to generate lesson plan. Please try again.");
+  }
+}
+
 export async function generateQuizFromImage(base64Image: string, mimeType: string) {
   if (!apiKey) {
     throw new Error("AI quiz generation is currently unavailable. Please configure the Gemini API key.");
