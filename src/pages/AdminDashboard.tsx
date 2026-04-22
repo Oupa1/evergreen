@@ -176,7 +176,9 @@ export default function AdminDashboard() {
   const [newTeacher, setNewTeacher] = useState({ first_name: '', last_name: '', email: '', phone: '', password: 'teacher123' });
   const [editingTeacher, setEditingTeacher] = useState<any | null>(null);
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [top5Phase, setTop5Phase] = useState<'all' | 'reception' | 'lower' | 'higher'>('all');
   const [top5Grade, setTop5Grade] = useState<string>('');
+  const [top5Section, setTop5Section] = useState<string>('');
   const [top5Subject, setTop5Subject] = useState<string>(''); // empty means overall
   const [top5Results, setTop5Results] = useState<any[]>([]);
   const [isLoadingTop5, setIsLoadingTop5] = useState(false);
@@ -188,12 +190,57 @@ export default function AdminDashboard() {
     if (activeTab === 'overview') {
       fetchTop5Data();
     }
-  }, [activeTab, top5Grade, top5Subject, top5Term, top5Year]);
+  }, [activeTab, top5Phase, top5Grade, top5Section, top5Subject, top5Term, top5Year]);
 
   const fetchTop5Data = async () => {
     setIsLoadingTop5(true);
     try {
-      // Step 1: Fetch only student_id + score (no joins) — much faster
+      // Step 1: Determine which student IDs to include based on phase/grade/section filters
+      let eligibleStudentIds: string[] | null = null;
+
+      if (top5Section) {
+        // Specific section
+        const { data: sData } = await supabase
+          .from('students')
+          .select('id')
+          .eq('section_id', top5Section)
+          .eq('school_id', school_id);
+        eligibleStudentIds = (sData || []).map((s: any) => s.id);
+      } else if (top5Grade) {
+        // Specific grade — get all sections in that grade first
+        const sectionIds = sections.filter(s => s.grade_id === top5Grade).map(s => s.id);
+        if (sectionIds.length > 0) {
+          const { data: sData } = await supabase
+            .from('students')
+            .select('id')
+            .in('section_id', sectionIds)
+            .eq('school_id', school_id);
+          eligibleStudentIds = (sData || []).map((s: any) => s.id);
+        } else {
+          eligibleStudentIds = [];
+        }
+      } else if (top5Phase !== 'all') {
+        // Phase filter — get all grades in phase, then sections, then students
+        const phaseGradeIds = grades.filter(g => getGradePhase(g.name) === top5Phase).map(g => g.id);
+        const phaseSectionIds = sections.filter(s => phaseGradeIds.includes(s.grade_id)).map(s => s.id);
+        if (phaseSectionIds.length > 0) {
+          const { data: sData } = await supabase
+            .from('students')
+            .select('id')
+            .in('section_id', phaseSectionIds)
+            .eq('school_id', school_id);
+          eligibleStudentIds = (sData || []).map((s: any) => s.id);
+        } else {
+          eligibleStudentIds = [];
+        }
+      }
+
+      if (eligibleStudentIds !== null && eligibleStudentIds.length === 0) {
+        setTop5Results([]);
+        return;
+      }
+
+      // Step 2: Fetch results for eligible students
       let scoresQuery = supabase
         .from('results')
         .select('student_id, score, subject_id')
@@ -202,11 +249,12 @@ export default function AdminDashboard() {
         .eq('year', parseInt(top5Year));
 
       if (top5Subject) scoresQuery = scoresQuery.eq('subject_id', top5Subject);
+      if (eligibleStudentIds !== null) scoresQuery = scoresQuery.in('student_id', eligibleStudentIds);
 
       const { data: scoresData, error: scoresError } = await scoresQuery;
       if (scoresError) throw scoresError;
 
-      // Step 2: Aggregate scores per student in JS
+      // Step 3: Aggregate scores per student in JS
       const scoreMap: { [key: string]: { total: number; count: number } } = {};
       scoresData?.forEach(r => {
         if (!scoreMap[r.student_id]) scoreMap[r.student_id] = { total: 0, count: 0 };
@@ -214,19 +262,19 @@ export default function AdminDashboard() {
         scoreMap[r.student_id].count += 1;
       });
 
-      // Get top 5 student IDs sorted by average
-      let topEntries = Object.entries(scoreMap)
+      // Step 4: Get top 5 student IDs sorted by average
+      const topEntries = Object.entries(scoreMap)
         .map(([id, s]) => ({ id, average: s.total / s.count }))
-        .sort((a, b) => b.average - a.average);
+        .sort((a, b) => b.average - a.average)
+        .slice(0, 5);
 
-      // Step 3: Fetch only the top ~20 student details (to allow grade filtering)
-      const topIds = topEntries.slice(0, 20).map(e => e.id);
-      if (topIds.length === 0) { setTop5Results([]); return; }
+      if (topEntries.length === 0) { setTop5Results([]); return; }
 
+      // Step 5: Fetch student details for top 5 only
       const { data: studentsData } = await supabase
         .from('students')
         .select('id, first_name, last_name, student_id, phone, section_id, sections:section_id(name, grade_id, grades:grade_id(name))')
-        .in('id', topIds);
+        .in('id', topEntries.map(e => e.id));
 
       const studentLookup: { [key: string]: any } = {};
       studentsData?.forEach(s => { studentLookup[s.id] = s; });
@@ -235,11 +283,9 @@ export default function AdminDashboard() {
         .map(e => {
           const s = studentLookup[e.id];
           if (!s) return null;
-          if (top5Grade && (s as any).sections?.grade_id !== top5Grade) return null;
           return { ...s, average: e.average };
         })
-        .filter(Boolean)
-        .slice(0, 5);
+        .filter(Boolean);
 
       setTop5Results(processed);
     } catch (error) {
@@ -2812,40 +2858,113 @@ export default function AdminDashboard() {
                 transition={{ delay: 0.6 }}
                 className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8"
               >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-lg shadow-amber-100">
-                      <Trophy className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900">Top 5 Students</h2>
-                      <p className="text-sm text-slate-500">Highest academic achievers</p>
-                    </div>
+                {/* Header */}
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center shadow-lg shadow-amber-100">
+                    <Trophy className="w-6 h-6" />
                   </div>
-                  
-                  <div className="flex flex-wrap items-center gap-4">
-                    <select 
-                      value={top5Grade}
-                      onChange={(e) => setTop5Grade(e.target.value)}
+                  <div>
+                    <h2 className="text-xl font-bold text-slate-900">Top 5 Students</h2>
+                    <p className="text-sm text-slate-500">Highest academic achievers</p>
+                  </div>
+                </div>
+
+                {/* Phase tabs */}
+                <div className="flex flex-wrap gap-2 mb-5">
+                  {([
+                    { key: 'all',       label: 'All Phases' },
+                    { key: 'reception', label: 'Grade R' },
+                    { key: 'lower',     label: 'Grades 1–3' },
+                    { key: 'higher',    label: 'Grades 4–7' },
+                  ] as const).map(p => (
+                    <button
+                      key={p.key}
+                      onClick={() => { setTop5Phase(p.key); setTop5Grade(''); setTop5Section(''); }}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                        top5Phase === p.key
+                          ? 'bg-primary-600 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filter row */}
+                <div className="flex flex-wrap items-center gap-3 mb-8">
+                  {/* Grade */}
+                  <select
+                    value={top5Grade}
+                    onChange={(e) => { setTop5Grade(e.target.value); setTop5Section(''); }}
+                    className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">
+                      {top5Phase === 'all' ? 'All Grades' :
+                       top5Phase === 'reception' ? 'Grade R' :
+                       top5Phase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}
+                    </option>
+                    {grades
+                      .filter(g => top5Phase === 'all' || getGradePhase(g.name) === top5Phase)
+                      .map(g => <option key={g.id} value={g.id}>{g.name}</option>)
+                    }
+                  </select>
+
+                  {/* Section — only show when a grade is selected */}
+                  {top5Grade && (
+                    <select
+                      value={top5Section}
+                      onChange={(e) => setTop5Section(e.target.value)}
                       className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
                     >
-                      <option value="">All Grades</option>
-                      {grades.map(g => (
-                        <option key={g.id} value={g.id}>{g.name}</option>
-                      ))}
+                      <option value="">All Sections</option>
+                      {sections
+                        .filter(s => s.grade_id === top5Grade)
+                        .map(s => <option key={s.id} value={s.id}>{s.name}</option>)
+                      }
                     </select>
-                    
-                    <select 
-                      value={top5Subject}
-                      onChange={(e) => setTop5Subject(e.target.value)}
-                      className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="">Overall Average</option>
-                      {subjects.map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                  )}
+
+                  {/* Subject */}
+                  <select
+                    value={top5Subject}
+                    onChange={(e) => setTop5Subject(e.target.value)}
+                    className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">Overall Average</option>
+                    {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+
+                  {/* Term */}
+                  <select
+                    value={top5Term}
+                    onChange={(e) => setTop5Term(e.target.value)}
+                    className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                  >
+                    {['Term 1','Term 2','Term 3','Term 4'].map(t => <option key={t}>{t}</option>)}
+                  </select>
+
+                  {/* Year */}
+                  <select
+                    value={top5Year}
+                    onChange={(e) => setTop5Year(e.target.value)}
+                    className="px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-600 focus:ring-2 focus:ring-primary-500"
+                  >
+                    {[new Date().getFullYear(), new Date().getFullYear() - 1, new Date().getFullYear() - 2].map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+
+                  {/* Active scope label */}
+                  <span className="text-xs text-slate-400 font-medium ml-1">
+                    {top5Section
+                      ? `Section: ${sections.find(s => s.id === top5Section)?.name}`
+                      : top5Grade
+                      ? `Grade: ${grades.find(g => g.id === top5Grade)?.name}`
+                      : top5Phase !== 'all'
+                      ? `Phase: ${top5Phase === 'reception' ? 'Grade R' : top5Phase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}`
+                      : 'All students'}
+                  </span>
                 </div>
 
                 {isLoadingTop5 ? (
@@ -2863,7 +2982,12 @@ export default function AdminDashboard() {
                         transition={{ delay: i * 0.1 }}
                         className="relative p-6 bg-slate-50 rounded-3xl border border-slate-100 hover:shadow-lg transition-all group"
                       >
-                        <div className="absolute -top-3 -left-3 w-8 h-8 bg-white rounded-full border-2 border-amber-400 flex items-center justify-center font-bold text-amber-600 shadow-sm z-10">
+                        <div className={`absolute -top-3 -left-3 w-8 h-8 bg-white rounded-full border-2 flex items-center justify-center font-bold shadow-sm z-10 ${
+                          i === 0 ? 'border-amber-400 text-amber-600' :
+                          i === 1 ? 'border-slate-400 text-slate-500' :
+                          i === 2 ? 'border-orange-400 text-orange-600' :
+                          'border-slate-200 text-slate-400'
+                        }`}>
                           {i + 1}
                         </div>
                         
@@ -2873,7 +2997,7 @@ export default function AdminDashboard() {
                           </div>
                           <h3 className="font-bold text-slate-900 line-clamp-1">{student.first_name} {student.last_name}</h3>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                            {student.sections?.grades?.name} - {student.sections?.name}
+                            {student.sections?.grades?.name} · {student.sections?.name}
                           </p>
                           
                           <div className="mt-4 w-full p-3 bg-white rounded-2xl border border-slate-100">
@@ -2883,19 +3007,15 @@ export default function AdminDashboard() {
                             </p>
                           </div>
 
-                          {student.phone && (
+                          {student.phone ? (
                             <button 
-                              onClick={() => {
-                                setActiveTab('sms');
-                                // You might want to pre-fill the SMS recipient here
-                              }}
+                              onClick={() => setActiveTab('sms')}
                               className="mt-4 flex items-center gap-2 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors"
                             >
                               <MessageSquare className="w-3 h-3" />
                               Send SMS
                             </button>
-                          )}
-                          {!student.phone && (
+                          ) : (
                             <p className="mt-4 text-[10px] text-slate-400 italic">No contact number</p>
                           )}
                         </div>
@@ -2904,6 +3024,7 @@ export default function AdminDashboard() {
                     {top5Results.length === 0 && (
                       <div className="col-span-5 py-12 text-center">
                         <p className="text-slate-400 italic">No results found for the selected filters.</p>
+                        <p className="text-xs text-slate-400 mt-1">Try a different term, year, or phase combination.</p>
                       </div>
                     )}
                   </div>
