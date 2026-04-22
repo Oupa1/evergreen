@@ -1022,26 +1022,36 @@ export default function AdminDashboard() {
       const totalSteps = phaseSections.length;
       let currentStep = 0;
 
+      // Build the slot order as day-first then period, so subjects are spread across
+      // all 5 days evenly instead of being clustered on one day.
+      // Order: Mon P1, Tue P1, Wed P1, Thu P1, Fri P1, Mon P2, Tue P2, …
+      const spreadSlots: { day: string; period: string }[] = [];
+      for (let pIdx = 0; pIdx < availablePeriods.length; pIdx++) {
+        for (const day of DAYS) {
+          spreadSlots.push({ day, period: availablePeriods[pIdx] });
+        }
+      }
+
       for (const section of phaseSections) {
         const sectionGradeName = grades.find(g => g.id === section.grade_id)?.name ?? '';
         const sectionAssignments = shuffledAssignments.filter(a => a.section_id === section.id);
-        let currentDayIdx = 0;
-        let currentPeriodIdx = 0;
+        // Each assignment tracks its own pointer into spreadSlots so it spreads independently
+        // but starts after the previous assignment finished to avoid repeating early slots.
+        let slotPointer = 0;
 
         for (const assignment of sectionAssignments) {
           const preplacedCount = preplaced[`${section.id}_${assignment.subject_id}`] || 0;
           let periodsToAssign = Math.max(0, (assignment.periods_per_week || 0) - preplacedCount);
           let attempts = 0;
-          const maxAttempts = DAYS.length * availablePeriods.length * 3;
+          const maxAttempts = spreadSlots.length * 3;
 
           while (periodsToAssign > 0 && attempts < maxAttempts) {
-            const day = DAYS[currentDayIdx];
-            const period = availablePeriods[currentPeriodIdx];
+            const { day, period } = spreadSlots[slotPointer % spreadSlots.length];
             const teacherKey = `${assignment.teacher_id}_${day}_${period}`;
-            
+
             const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === day && a.period === period);
             const isReserved = isReservedSlot(day, period, sectionGradeName);
-            
+
             if (!teacherBusy[teacherKey] && !isSectionBusy && !isReserved) {
               newAllocations.push({
                 section_id: section.id,
@@ -1055,14 +1065,7 @@ export default function AdminDashboard() {
               periodsToAssign--;
             }
 
-            currentPeriodIdx++;
-            if (currentPeriodIdx >= availablePeriods.length) {
-              currentPeriodIdx = 0;
-              currentDayIdx++;
-              if (currentDayIdx >= DAYS.length) {
-                currentDayIdx = 0;
-              }
-            }
+            slotPointer++;
             attempts++;
           }
         }
