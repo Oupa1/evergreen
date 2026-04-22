@@ -267,7 +267,7 @@ export default function AdminDashboard() {
   const [filterSection, setFilterSection] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'last_name', direction: 'asc' });
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPhase, setSelectedPhase] = useState<'lower' | 'higher'>('higher');
+  const [selectedPhase, setSelectedPhase] = useState<'reception' | 'lower' | 'higher'>('higher');
   const [resultSelectedGrade, setResultSelectedGrade] = useState('');
   const [resultSelectedSection, setResultSelectedSection] = useState('');
   const [smsMessage, setSmsMessage] = useState('');
@@ -446,9 +446,10 @@ export default function AdminDashboard() {
   const [ttViewMode, setTtViewMode] = useState<'grid' | 'dayview'>('grid');
 
   const getGradePhase = (gradeName: string) => {
-    const lower = ['R', '1', '2', '3'];
-    const name = gradeName.toUpperCase();
-    if (lower.some(l => name.includes(`GRADE ${l}`) || name === l)) return 'lower';
+    const name = gradeName.toUpperCase().trim();
+    if (name === 'R' || name === 'GRADE R' || name.endsWith(' R')) return 'reception';
+    const lower = ['1', '2', '3'];
+    if (lower.some(l => name === `GRADE ${l}` || name === l)) return 'lower';
     return 'higher';
   };
 
@@ -1080,7 +1081,7 @@ export default function AdminDashboard() {
         const { error } = await supabase.from('timetable_allocations').insert(newAllocations);
         if (error) throw error;
         setGenerationProgress(100);
-        showMessage('success', `Generated ${newAllocations.length} slots for ${selectedPhase} phase`);
+        showMessage('success', `Generated ${newAllocations.length} slots for ${selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}`);
         fetchInitialData();
         setTimeout(() => setActiveTab('timetable-view'), 500);
       } else {
@@ -4956,16 +4957,22 @@ export default function AdminDashboard() {
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="flex bg-slate-100 p-1 rounded-xl">
                     <button 
+                      onClick={() => setSelectedPhase('reception')}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'reception' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                      Grade R
+                    </button>
+                    <button 
                       onClick={() => setSelectedPhase('lower')}
                       className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'lower' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
-                      Lower (R-3)
+                      Grades 1–3
                     </button>
                     <button 
                       onClick={() => setSelectedPhase('higher')}
                       className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'higher' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
-                      Higher (4-7)
+                      Grades 4–7
                     </button>
                   </div>
                   <button 
@@ -5066,7 +5073,7 @@ export default function AdminDashboard() {
                     }).length === 0 && (
                       <tr>
                         <td colSpan={5} className="p-12 text-center text-slate-400 italic">
-                          No subject assignments found for {selectedPhase === 'lower' ? 'Lower (R-3)' : 'Higher (4-7)'} phase.
+                          No subject assignments found for {selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'} phase.
                         </td>
                       </tr>
                     )}
@@ -5089,16 +5096,22 @@ export default function AdminDashboard() {
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="flex bg-slate-100 p-1 rounded-xl">
                       <button 
+                        onClick={() => setSelectedPhase('reception')}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'reception' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Grade R
+                      </button>
+                      <button 
                         onClick={() => setSelectedPhase('lower')}
                         className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'lower' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                       >
-                        Lower (R-3)
+                        Grades 1–3
                       </button>
                       <button 
                         onClick={() => setSelectedPhase('higher')}
                         className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'higher' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                       >
-                        Higher (4-7)
+                        Grades 4–7
                       </button>
                     </div>
                     <button 
@@ -5113,7 +5126,7 @@ export default function AdminDashboard() {
                       onClick={() => {
                         askConfirmation(
                           'Clear Timetable',
-                          `Are you sure you want to clear the timetable for ${selectedPhase} phase?`,
+                          `Are you sure you want to clear the timetable for ${selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}?`,
                           async () => {
                             setLoading(true);
                             try {
@@ -5471,24 +5484,22 @@ export default function AdminDashboard() {
 
                     <div className="flex bg-slate-100 p-1 rounded-xl">
                       <button 
-                        onClick={() => {
-                          setSelectedPhase('lower');
-                          setViewTimetableGradeId('');
-                          setViewTimetableSectionId('');
-                        }}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'lower' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        onClick={() => { setSelectedPhase('reception'); setViewTimetableGradeId(''); setViewTimetableSectionId(''); }}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'reception' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                       >
-                        Lower (R-3)
+                        Grade R
                       </button>
                       <button 
-                        onClick={() => {
-                          setSelectedPhase('higher');
-                          setViewTimetableGradeId('');
-                          setViewTimetableSectionId('');
-                        }}
+                        onClick={() => { setSelectedPhase('lower'); setViewTimetableGradeId(''); setViewTimetableSectionId(''); }}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'lower' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        Grades 1–3
+                      </button>
+                      <button 
+                        onClick={() => { setSelectedPhase('higher'); setViewTimetableGradeId(''); setViewTimetableSectionId(''); }}
                         className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedPhase === 'higher' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                       >
-                        Higher (4-7)
+                        Grades 4–7
                       </button>
                     </div>
 
@@ -5593,7 +5604,7 @@ export default function AdminDashboard() {
                     <h1 className="text-3xl font-black text-slate-900 uppercase tracking-tighter">{schoolInfo.name}</h1>
                     <p className="text-sm font-bold text-slate-600 mt-1">{schoolInfo.contact}</p>
                     <div className="mt-4 inline-block px-6 py-2 bg-slate-900 text-white font-bold text-sm uppercase tracking-widest">
-                      Weekly Timetable - {selectedPhase === 'lower' ? 'Lower Phase (R-3)' : 'Higher Phase (4-7)'}
+                      Weekly Timetable - {selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}
                       {viewTimetableGradeId && ` - ${grades.find(g => g.id === viewTimetableGradeId)?.name}`}
                       {viewTimetableSectionId && ` - ${sections.find(s => s.id === viewTimetableSectionId)?.name}`}
                     </div>
@@ -5748,7 +5759,7 @@ export default function AdminDashboard() {
                                 {' · '}
                                 <span className="text-primary-600">{section.name}</span>
                               </span>
-                              <span className="text-sm font-normal text-slate-500 no-print">{selectedPhase === 'lower' ? 'Lower Phase' : 'Higher Phase'}</span>
+                              <span className="text-sm font-normal text-slate-500 no-print">{selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}</span>
                             </h3>
                             <table className="w-full border-collapse border border-slate-200 text-sm">
                               <thead>
