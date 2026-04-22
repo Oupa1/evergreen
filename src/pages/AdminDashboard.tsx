@@ -539,16 +539,33 @@ export default function AdminDashboard() {
     if (!llSubject) return;
     setLlLoading(true);
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('results')
         .select('score, student_id, students(id, first_name, last_name, student_id, sections(name, grade_id, grades(name)))')
         .eq('school_id', school_id)
         .eq('subject_id', llSubject)
         .eq('term', llTerm)
         .eq('year', parseInt(llYear));
-      const { data, error } = await query;
       if (error) throw error;
-      setLlResults(data || []);
+      // Aggregate: one entry per student using their AVERAGE score across all tasks
+      const byStudent = new Map<string, { score: number; count: number; row: any }>();
+      for (const row of (data || [])) {
+        const sid = row.student_id;
+        if (!sid) continue;
+        const s = Number(row.score) || 0;
+        if (byStudent.has(sid)) {
+          const existing = byStudent.get(sid)!;
+          existing.score += s;
+          existing.count += 1;
+        } else {
+          byStudent.set(sid, { score: s, count: 1, row });
+        }
+      }
+      const aggregated = Array.from(byStudent.values()).map(({ score, count, row }) => ({
+        ...row,
+        score: count > 0 ? score / count : 0,
+      }));
+      setLlResults(aggregated);
     } catch (err: any) {
       console.error('Learner list fetch error:', err.message);
       setLlResults([]);

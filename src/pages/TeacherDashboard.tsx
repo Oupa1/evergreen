@@ -326,7 +326,25 @@ export default function TeacherDashboard() {
         .eq('term', llTerm)
         .eq('year', parseInt(llYear));
       if (error) throw error;
-      setLlResults(data || []);
+      // Aggregate: one entry per student using their AVERAGE score across all tasks
+      const byStudent = new Map<string, { score: number; count: number; row: any }>();
+      for (const row of (data || [])) {
+        const sid = row.student_id;
+        if (!sid) continue;
+        const s = Number(row.score) || 0;
+        if (byStudent.has(sid)) {
+          const existing = byStudent.get(sid)!;
+          existing.score += s;
+          existing.count += 1;
+        } else {
+          byStudent.set(sid, { score: s, count: 1, row });
+        }
+      }
+      const aggregated = Array.from(byStudent.values()).map(({ score, count, row }) => ({
+        ...row,
+        score: count > 0 ? score / count : 0,
+      }));
+      setLlResults(aggregated);
     } catch (err: any) {
       console.error('Learner list fetch error:', err.message);
       setLlResults([]);
