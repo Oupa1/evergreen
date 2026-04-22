@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { School } from '../types';
+import { resolveSchoolId } from '../lib/resolveSchool';
 
 export function useSchool() {
   const [school, setSchool] = useState<School | null>(null);
@@ -8,17 +9,16 @@ export function useSchool() {
 
   useEffect(() => {
     const fetchSchool = async () => {
-      const schoolId = localStorage.getItem('school_id') || '1';
       try {
+        const schoolId = await resolveSchoolId();
         const { data, error } = await supabase
           .from('schools')
           .select('*')
           .eq('id', schoolId)
           .single();
 
-        if (data) {
+        if (data && !error) {
           setSchool(data);
-          // Apply theme colors if available
           if (data.primary_color) {
             document.documentElement.style.setProperty('--primary-color', data.primary_color);
           }

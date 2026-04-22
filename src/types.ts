@@ -123,6 +123,7 @@ export interface Task {
 export interface School {
   id: number;
   name: string;
+  slug?: string;
   domain?: string;
   logo_url?: string;
   primary_color?: string;

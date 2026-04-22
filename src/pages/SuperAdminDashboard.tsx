@@ -62,7 +62,8 @@ export default function SuperAdminDashboard() {
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
   // School Form State
-  const [newSchool, setNewSchool] = useState({ name: '', domain: '', primary_color: '#059669', secondary_color: '#10b981' });
+  const [newSchool, setNewSchool] = useState({ name: '', slug: '', domain: '', primary_color: '#059669', secondary_color: '#10b981' });
+  const [editingSlug, setEditingSlug] = useState<{ id: number; slug: string } | null>(null);
   const [editingSchool, setEditingSchool] = useState<School | null>(null);
 
   // Admin Form State
@@ -106,16 +107,31 @@ export default function SuperAdminDashboard() {
 
   const handleAddSchool = async (e: React.FormEvent) => {
     e.preventDefault();
+    const slugValue = newSchool.slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-') || null;
     try {
       const { data, error } = await supabase
         .from('schools')
-        .insert([newSchool])
+        .insert([{ ...newSchool, slug: slugValue }])
         .select();
 
       if (error) throw error;
       setSchools([...schools, data[0]]);
-      setNewSchool({ name: '', domain: '', primary_color: '#059669' });
+      setNewSchool({ name: '', slug: '', domain: '', primary_color: '#059669', secondary_color: '#10b981' });
       showMessage('success', 'School added successfully');
+    } catch (error: any) {
+      showMessage('error', error.message);
+    }
+  };
+
+  const handleSaveSlug = async () => {
+    if (!editingSlug) return;
+    const slug = editingSlug.slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    try {
+      const { error } = await supabase.from('schools').update({ slug }).eq('id', editingSlug.id);
+      if (error) throw error;
+      setSchools(schools.map(s => s.id === editingSlug.id ? { ...s, slug } : s));
+      setEditingSlug(null);
+      showMessage('success', 'Subdomain slug saved');
     } catch (error: any) {
       showMessage('error', error.message);
     }
@@ -213,10 +229,13 @@ export default function SuperAdminDashboard() {
     navigate('/admin');
   };
 
-  const copyDemoLink = (schoolId: number) => {
-    const url = `${window.location.origin}/?school_id=${schoolId}`;
+  const copyDemoLink = (school: School) => {
+    const slug = school.slug;
+    const url = slug
+      ? `${window.location.origin}/?slug=${slug}`
+      : `${window.location.origin}/?school_id=${school.id}`;
     navigator.clipboard.writeText(url);
-    showMessage('success', 'Demo link copied to clipboard');
+    showMessage('success', slug ? `Link copied: ?slug=${slug}` : 'Demo link copied (no slug set)');
   };
 
   const handleLogout = () => {
@@ -394,7 +413,7 @@ export default function SuperAdminDashboard() {
             >
               <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
                 <h3 className="text-xl font-bold text-slate-900 mb-6">Add New School</h3>
-                <form onSubmit={handleAddSchool} className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <form onSubmit={handleAddSchool} className="grid grid-cols-1 md:grid-cols-5 gap-6">
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-slate-700">School Name</label>
                     <input 
@@ -405,6 +424,19 @@ export default function SuperAdminDashboard() {
                       className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500" 
                       placeholder="e.g. Sunrise Primary"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700">Subdomain Slug</label>
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        value={newSchool.slug}
+                        onChange={(e) => setNewSchool({ ...newSchool, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-primary-500 font-mono text-sm" 
+                        placeholder="sunrise"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400">Used for: sunrise.yourdomain.co.za</p>
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-slate-700">Domain (Optional)</label>
@@ -446,6 +478,7 @@ export default function SuperAdminDashboard() {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100">
                       <th className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-widest">School Name</th>
+                      <th className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Subdomain Slug</th>
                       <th className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-widest">Domain</th>
                       <th className="px-8 py-6 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
                     </tr>
@@ -461,18 +494,44 @@ export default function SuperAdminDashboard() {
                             <span className="font-bold text-slate-900">{school.name}</span>
                           </div>
                         </td>
-                        <td className="px-8 py-6 text-slate-500">{school.domain || 'N/A'}</td>
+                        <td className="px-8 py-6">
+                          {editingSlug?.id === school.id ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={editingSlug.slug}
+                                onChange={(e) => setEditingSlug({ ...editingSlug, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+                                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-sm w-32 focus:ring-2 focus:ring-primary-400 outline-none"
+                                autoFocus
+                              />
+                              <button onClick={handleSaveSlug} className="px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-bold hover:bg-primary-700 transition-all">Save</button>
+                              <button onClick={() => setEditingSlug(null)} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all">Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {school.slug ? (
+                                <span className="font-mono text-sm bg-emerald-50 text-emerald-700 px-3 py-1 rounded-lg">{school.slug}</span>
+                              ) : (
+                                <span className="text-slate-400 italic text-sm">not set</span>
+                              )}
+                              <button onClick={() => setEditingSlug({ id: school.id, slug: school.slug || '' })} className="p-1 text-slate-300 hover:text-primary-600 transition-colors" title="Edit slug">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-8 py-6 text-slate-500">{school.domain || '—'}</td>
                         <td className="px-8 py-6 text-right">
                           <div className="flex items-center justify-end gap-2">
                             <button 
-                              onClick={() => copyDemoLink(school.id)}
+                              onClick={() => copyDemoLink(school)}
                               className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-xl transition-all"
-                              title="Copy Demo Link"
+                              title={school.slug ? `Copy ?slug=${school.slug} link` : 'Copy demo link'}
                             >
                               <Copy className="w-5 h-5" />
                             </button>
                             <a 
-                              href={`/?school_id=${school.id}`}
+                              href={school.slug ? `/?slug=${school.slug}` : `/?school_id=${school.id}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-xl transition-all"

@@ -205,6 +205,17 @@ BEGIN
     END IF;
 END $$;
 
+-- Add slug column for subdomain-based multi-school routing
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='schools' AND column_name='slug') THEN
+        ALTER TABLE schools ADD COLUMN slug TEXT UNIQUE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='school_info' AND column_name='slug') THEN
+        ALTER TABLE school_info ADD COLUMN slug TEXT UNIQUE;
+    END IF;
+END $$;
+
 -- NOTE: EMIS (Education Management Information System) number is currently stored inside
 -- the timetable_config JSONB column as timetable_config.emis (no ALTER TABLE needed with anon key).
 -- When a service-role key is available, run the following to give it a proper dedicated column:
