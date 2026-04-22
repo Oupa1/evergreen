@@ -73,7 +73,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useTheme } from '../components/ThemeProvider';
 
-type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications';
+type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications' | 'meetings';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -288,6 +288,11 @@ export default function AdminDashboard() {
   const [noticePinned, setNoticePinned] = useState(false);
   const [noticeEditId, setNoticeEditId] = useState<string | null>(null);
   const [savingNotice, setSavingNotice] = useState(false);
+  // Meetings state
+  const [adminMeetings, setAdminMeetings] = useState<any[]>([]);
+  const [meetingForm, setMeetingForm] = useState({ title: '', description: '', date: '', time: '', location: '' });
+  const [meetingEditId, setMeetingEditId] = useState<string | null>(null);
+  const [savingMeeting, setSavingMeeting] = useState(false);
   // SMS History state
   const [smsHistory, setSmsHistory] = useState<any[]>([]);
   // Applications state
@@ -457,6 +462,9 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (activeTab === 'sms' || activeTab === 'sms-config') {
       fetchSMSBalance();
+    }
+    if (activeTab === 'meetings') {
+      fetchMeetings();
     }
   }, [activeTab, schoolInfo.sms_config]);
 
@@ -880,6 +888,74 @@ export default function AdminDashboard() {
     setNoticeType(notice.type);
     setNoticeImageUrl(notice.imageUrl || '');
     setNoticePinned(notice.pinned || false);
+  };
+
+  // ── MEETINGS ──
+  const fetchMeetings = async () => {
+    const { data } = await supabase
+      .from('meetings')
+      .select('*')
+      .eq('school_id', school_id)
+      .order('date', { ascending: true });
+    setAdminMeetings(data || []);
+  };
+
+  const resetMeetingForm = () => {
+    setMeetingForm({ title: '', description: '', date: '', time: '', location: '' });
+    setMeetingEditId(null);
+  };
+
+  const handleSaveMeeting = async () => {
+    if (!meetingForm.title.trim() || !meetingForm.date || !meetingForm.time) {
+      showMessage('error', 'Title, date and time are required');
+      return;
+    }
+    setSavingMeeting(true);
+    try {
+      const dateTime = new Date(`${meetingForm.date}T${meetingForm.time}`).toISOString();
+      const payload = {
+        title: meetingForm.title.trim(),
+        description: meetingForm.description.trim() || null,
+        date: dateTime,
+        location: meetingForm.location.trim() || null,
+        school_id,
+      };
+      if (meetingEditId) {
+        const { error } = await supabase.from('meetings').update(payload).eq('id', meetingEditId);
+        if (error) throw error;
+        showMessage('success', 'Meeting updated');
+      } else {
+        const { error } = await supabase.from('meetings').insert([payload]);
+        if (error) throw error;
+        logAction('school.update', { action: 'meeting.add', title: payload.title });
+        showMessage('success', 'Meeting scheduled — teachers will see it immediately');
+      }
+      resetMeetingForm();
+      fetchMeetings();
+    } catch (err: any) {
+      showMessage('error', err.message);
+    } finally {
+      setSavingMeeting(false);
+    }
+  };
+
+  const handleDeleteMeeting = (id: string) => {
+    askConfirmation('Delete Meeting', 'Remove this meeting? Teachers will no longer see it.', async () => {
+      const { error } = await supabase.from('meetings').delete().eq('id', id);
+      if (error) showMessage('error', error.message);
+      else {
+        setAdminMeetings(prev => prev.filter(m => m.id !== id));
+        showMessage('success', 'Meeting removed');
+      }
+    });
+  };
+
+  const startEditMeeting = (m: any) => {
+    const d = new Date(m.date);
+    const dateStr = d.toISOString().split('T')[0];
+    const timeStr = d.toTimeString().slice(0, 5);
+    setMeetingForm({ title: m.title, description: m.description || '', date: dateStr, time: timeStr, location: m.location || '' });
+    setMeetingEditId(m.id);
   };
 
   // ── SMS HISTORY ──
@@ -2419,6 +2495,7 @@ export default function AdminDashboard() {
                 { id: 'sms', label: 'SMS', icon: MessageSquare },
                 { id: 'sms-config', label: 'SMS Configuration', icon: Settings2 },
                 { id: 'noticeboard', label: 'Noticeboard & Gallery', icon: Bell },
+                { id: 'meetings', label: 'Meetings', icon: Calendar },
               ]
             },
             {
@@ -6320,6 +6397,143 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── MEETINGS TAB ── */}
+            {activeTab === 'meetings' && (
+              <motion.div key="meetings" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6 p-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <Calendar className="w-6 h-6 text-primary-600" /> Staff Meetings
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">Schedule meetings here — they appear instantly in every teacher's dashboard.</p>
+                </div>
+
+                {/* Form */}
+                <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4">
+                    {meetingEditId ? 'Edit Meeting' : 'Schedule New Meeting'}
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Meeting Title *</label>
+                      <input
+                        value={meetingForm.title}
+                        onChange={e => setMeetingForm({ ...meetingForm, title: e.target.value })}
+                        placeholder="e.g. Staff Development Workshop"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Date *</label>
+                      <input
+                        type="date"
+                        value={meetingForm.date}
+                        onChange={e => setMeetingForm({ ...meetingForm, date: e.target.value })}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Time *</label>
+                      <input
+                        type="time"
+                        value={meetingForm.time}
+                        onChange={e => setMeetingForm({ ...meetingForm, time: e.target.value })}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Location / Venue</label>
+                      <input
+                        value={meetingForm.location}
+                        onChange={e => setMeetingForm({ ...meetingForm, location: e.target.value })}
+                        placeholder="e.g. School Hall, Room 12, Online"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Description / Agenda</label>
+                      <textarea
+                        value={meetingForm.description}
+                        onChange={e => setMeetingForm({ ...meetingForm, description: e.target.value })}
+                        rows={3}
+                        placeholder="Outline the agenda or purpose of this meeting…"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 resize-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      onClick={handleSaveMeeting}
+                      disabled={savingMeeting || !meetingForm.title.trim() || !meetingForm.date || !meetingForm.time}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white rounded-2xl text-sm font-bold hover:bg-primary-700 transition-all shadow-sm disabled:opacity-50"
+                    >
+                      {savingMeeting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {meetingEditId ? 'Update Meeting' : 'Schedule Meeting'}
+                    </button>
+                    {meetingEditId && (
+                      <button
+                        onClick={resetMeetingForm}
+                        className="px-5 py-2.5 border border-slate-200 rounded-2xl text-sm font-bold hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Meetings List */}
+                {adminMeetings.length === 0 ? (
+                  <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-10 text-center text-slate-400">
+                    <Calendar className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">No meetings scheduled yet</p>
+                    <p className="text-sm mt-1">Add one above — it will appear on every teacher's dashboard straight away</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {adminMeetings.map((m: any) => {
+                      const dt = new Date(m.date);
+                      const isPast = dt < new Date();
+                      return (
+                        <div key={m.id} className={`bg-white rounded-[1.5rem] border ${isPast ? 'border-slate-100 opacity-70' : 'border-slate-200'} shadow-sm p-5 flex gap-5 items-start`}>
+                          <div className={`flex-shrink-0 w-14 h-14 rounded-2xl flex flex-col items-center justify-center text-white font-bold ${isPast ? 'bg-slate-400' : 'bg-primary-600'}`}>
+                            <span className="text-xs uppercase tracking-wide leading-none">
+                              {dt.toLocaleString('default', { month: 'short' })}
+                            </span>
+                            <span className="text-xl leading-none">{dt.getDate()}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-slate-900">{m.title}</p>
+                              {isPast && <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-xs font-bold">Past</span>}
+                            </div>
+                            {m.description && <p className="text-sm text-slate-500 mt-0.5">{m.description}</p>}
+                            <div className="flex flex-wrap gap-4 mt-2 text-xs text-slate-400">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5" />
+                                {dt.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} at {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                              {m.location && (
+                                <span className="flex items-center gap-1">
+                                  <ChevronRight className="w-3.5 h-3.5" />{m.location}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2 flex-shrink-0">
+                            <button onClick={() => startEditMeeting(m)} title="Edit" className="p-2 rounded-xl hover:bg-slate-100 text-slate-500">
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => handleDeleteMeeting(m.id)} title="Delete" className="p-2 rounded-xl hover:bg-red-50 text-red-500">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
