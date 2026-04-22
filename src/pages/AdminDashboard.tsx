@@ -422,7 +422,7 @@ export default function AdminDashboard() {
     periodDuration: number;
     knockOffTime: string;
     breaks: { name: string; startTime: string; duration: number }[];
-    dayRules: { id: string; day: string; period: string; label: string; color: string; noTeacher: boolean }[];
+    dayRules: { id: string; day: string; period: string; label: string; color: string; noTeacher: boolean; gradeFilter?: string }[];
     [key: string]: any;
   }>({
     startTime: '08:00',
@@ -436,12 +436,13 @@ export default function AdminDashboard() {
       { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
       { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
       { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: false },
+      { id: 'r4', day: 'Wednesday', period: 'second-to-last', label: 'Life Orientation', color: 'indigo', noTeacher: false, gradeFilter: 'Grade 7' },
     ],
   });
   const [showBreakForm, setShowBreakForm] = useState(false);
   const [newBreakForm, setNewBreakForm] = useState({ name: '', startTime: '', duration: '' });
   const [showDayRuleForm, setShowDayRuleForm] = useState(false);
-  const [newDayRule, setNewDayRule] = useState({ day: 'Monday', period: '1', label: '', color: 'slate', noTeacher: true });
+  const [newDayRule, setNewDayRule] = useState({ day: 'Monday', period: '1', label: '', color: 'slate', noTeacher: true, gradeFilter: '' });
   const [ttViewMode, setTtViewMode] = useState<'grid' | 'dayview'>('grid');
 
   const getGradePhase = (gradeName: string) => {
@@ -703,6 +704,7 @@ export default function AdminDashboard() {
               { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
               { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
               { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: false },
+              { id: 'r4', day: 'Wednesday', period: 'second-to-last', label: 'Life Orientation', color: 'indigo', noTeacher: false, gradeFilter: 'Grade 7' },
             ],
             ...schoolInfoRes.data.timetable_config,
           });
@@ -954,8 +956,20 @@ export default function AdminDashboard() {
         return { ...rule, resolvedPeriod };
       });
 
-      const isReservedSlot = (day: string, period: string) =>
-        resolvedDayRules.some((r: any) => r.day === day && r.resolvedPeriod === period);
+      // grade-aware reservation: a rule reserves a slot only for sections whose grade matches gradeFilter
+      const isReservedSlot = (day: string, period: string, sectionGradeName: string) =>
+        resolvedDayRules.some((r: any) => {
+          if (r.day !== day || r.resolvedPeriod !== period) return false;
+          if (r.gradeFilter) {
+            return sectionGradeName.toLowerCase().includes(r.gradeFilter.toLowerCase());
+          }
+          // General rule — reserve for all grades UNLESS a grade-specific rule also targets this slot
+          const hasSpecificRule = resolvedDayRules.some((sr: any) =>
+            sr.id !== r.id && sr.day === day && sr.resolvedPeriod === period &&
+            sr.gradeFilter && sectionGradeName.toLowerCase().includes(sr.gradeFilter.toLowerCase())
+          );
+          return !hasSpecificRule;
+        });
 
       // 5. Greedy Generation — honouring day rules and teacher conflicts
       const newAllocations: any[] = [];
@@ -965,10 +979,23 @@ export default function AdminDashboard() {
 
       const shuffledAssignments = [...phaseAssignments].sort(() => Math.random() - 0.5);
 
-      // 5a. Pre-place rules where noTeacher === false (e.g., Life Skills with class teacher)
+      // 5a. Pre-place rules where noTeacher === false (e.g., Life Skills / Life Orientation with class teacher)
       for (const section of phaseSections) {
+        const gradeName = grades.find(g => g.id === section.grade_id)?.name ?? '';
         const sectionAssignments = phaseAssignments.filter(a => a.section_id === section.id);
-        for (const rule of resolvedDayRules.filter((r: any) => !r.noTeacher)) {
+        // Only apply rules that match this section's grade
+        const applicableRules = resolvedDayRules.filter((r: any) => {
+          if (!r.noTeacher === false) return false; // only noTeacher:false rules here
+          if (r.noTeacher) return false;
+          if (r.gradeFilter) return gradeName.toLowerCase().includes(r.gradeFilter.toLowerCase());
+          // General rule — apply unless a grade-specific rule overrides this slot for this grade
+          const hasSpecificRule = resolvedDayRules.some((sr: any) =>
+            sr.id !== r.id && sr.day === r.day && sr.resolvedPeriod === r.resolvedPeriod &&
+            sr.gradeFilter && gradeName.toLowerCase().includes(sr.gradeFilter.toLowerCase())
+          );
+          return !hasSpecificRule;
+        });
+        for (const rule of applicableRules) {
           const matchingAssignment = sectionAssignments.find((a: any) =>
             (a.subjects?.name ?? '').toLowerCase() === rule.label.toLowerCase()
           );
@@ -996,6 +1023,7 @@ export default function AdminDashboard() {
       let currentStep = 0;
 
       for (const section of phaseSections) {
+        const sectionGradeName = grades.find(g => g.id === section.grade_id)?.name ?? '';
         const sectionAssignments = shuffledAssignments.filter(a => a.section_id === section.id);
         let currentDayIdx = 0;
         let currentPeriodIdx = 0;
@@ -1012,7 +1040,7 @@ export default function AdminDashboard() {
             const teacherKey = `${assignment.teacher_id}_${day}_${period}`;
             
             const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === day && a.period === period);
-            const isReserved = isReservedSlot(day, period);
+            const isReserved = isReservedSlot(day, period, sectionGradeName);
             
             if (!teacherBusy[teacherKey] && !isSectionBusy && !isReserved) {
               newAllocations.push({
@@ -5304,12 +5332,15 @@ export default function AdminDashboard() {
                       <p className="text-[10px] text-slate-400 mb-3">Fixed periods reserved per day (overrides subject allocation)</p>
                       <div className="space-y-2">
                         {(timetableConfig.dayRules ?? []).map((rule: any) => {
-                          const colorMap: Record<string, string> = { purple: 'bg-purple-100 text-purple-700', green: 'bg-emerald-100 text-emerald-700', blue: 'bg-blue-100 text-blue-700', slate: 'bg-slate-100 text-slate-700', amber: 'bg-amber-100 text-amber-700', red: 'bg-red-100 text-red-700' };
+                          const colorMap: Record<string, string> = { purple: 'bg-purple-100 text-purple-700', green: 'bg-emerald-100 text-emerald-700', blue: 'bg-blue-100 text-blue-700', indigo: 'bg-indigo-100 text-indigo-700', slate: 'bg-slate-100 text-slate-700', amber: 'bg-amber-100 text-amber-700', red: 'bg-red-100 text-red-700' };
                           const chip = colorMap[rule.color] ?? 'bg-slate-100 text-slate-700';
                           return (
                             <div key={rule.id} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
                               <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${chip}`}>{rule.label}</span>
-                              <div className="flex-1 text-xs text-slate-600"><span className="font-bold">{rule.day}</span> · Period {rule.period === 'last' ? 'Last' : rule.period === 'second-to-last' ? '2nd-to-last' : rule.period}</div>
+                              <div className="flex-1 text-xs text-slate-600">
+                                <span className="font-bold">{rule.day}</span> · Period {rule.period === 'last' ? 'Last' : rule.period === 'second-to-last' ? '2nd-to-last' : rule.period}
+                                {rule.gradeFilter && <span className="ml-1.5 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-bold">{rule.gradeFilter} only</span>}
+                              </div>
                               <button onClick={() => setTimetableConfig({ ...timetableConfig, dayRules: (timetableConfig.dayRules ?? []).filter((r: any) => r.id !== rule.id) })} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
                                 <Trash2 className="w-3 h-3" />
                               </button>
@@ -5338,6 +5369,13 @@ export default function AdminDashboard() {
                               <label className="text-[10px] font-bold text-slate-500 uppercase">Colour</label>
                               <select value={newDayRule.color} onChange={e => setNewDayRule({ ...newDayRule, color: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none">
                                 {['purple','green','blue','amber','red','slate'].map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">Grade Filter <span className="font-normal normal-case text-slate-400">(leave blank = all grades)</span></label>
+                              <select value={newDayRule.gradeFilter} onChange={e => setNewDayRule({ ...newDayRule, gradeFilter: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none">
+                                <option value="">All Grades</option>
+                                {grades.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
                               </select>
                             </div>
                             <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -5561,14 +5599,24 @@ export default function AdminDashboard() {
                   {ttViewMode === 'dayview' ? (() => {
                     const allSlots = calculatePeriodTimes();
                     const periodSlots = allSlots.filter(s => !s.isBreak);
+                    const activeSectionGradeName = grades.find(g => g.id === activeSection?.grade_id)?.name ?? '';
                     const resolvedRules = (timetableConfig.dayRules ?? []).map((rule: any) => {
                       let rp = rule.period;
                       if (rule.period === 'last') rp = periodSlots[periodSlots.length - 1]?.name ?? '';
                       else if (rule.period === 'second-to-last') rp = periodSlots[periodSlots.length - 2]?.name ?? periodSlots[periodSlots.length - 1]?.name ?? '';
                       else rp = `Period ${rule.period}`;
                       return { ...rule, resolvedPeriod: rp };
+                    }).filter((rule: any) => {
+                      // Grade-specific rule: only show for matching grade
+                      if (rule.gradeFilter) return activeSectionGradeName.toLowerCase().includes(rule.gradeFilter.toLowerCase());
+                      // General rule: hide if a grade-specific rule overrides the same slot for this grade
+                      const hasSpecificOverride = (timetableConfig.dayRules ?? []).some((sr: any) =>
+                        sr.id !== rule.id && sr.day === rule.day && sr.period === rule.period &&
+                        sr.gradeFilter && activeSectionGradeName.toLowerCase().includes(sr.gradeFilter.toLowerCase())
+                      );
+                      return !hasSpecificOverride;
                     });
-                    const ruleColorMap: Record<string, string> = { purple: 'bg-purple-100 border-purple-200 text-purple-800', green: 'bg-emerald-100 border-emerald-200 text-emerald-800', blue: 'bg-blue-100 border-blue-200 text-blue-800', amber: 'bg-amber-100 border-amber-200 text-amber-800', red: 'bg-red-100 border-red-200 text-red-800', slate: 'bg-slate-100 border-slate-200 text-slate-700' };
+                    const ruleColorMap: Record<string, string> = { purple: 'bg-purple-100 border-purple-200 text-purple-800', green: 'bg-emerald-100 border-emerald-200 text-emerald-800', blue: 'bg-blue-100 border-blue-200 text-blue-800', indigo: 'bg-indigo-100 border-indigo-200 text-indigo-800', amber: 'bg-amber-100 border-amber-200 text-amber-800', red: 'bg-red-100 border-red-200 text-red-800', slate: 'bg-slate-100 border-slate-200 text-slate-700' };
                     const filteredSections = sections.filter(s => {
                       const gradeName = grades.find(g => g.id === s.grade_id)?.name || '';
                       const matchesPhase = getGradePhase(gradeName) === selectedPhase;
