@@ -435,7 +435,7 @@ export default function AdminDashboard() {
     dayRules: [
       { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
       { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
-      { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: true },
+      { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: false },
     ],
   });
   const [showBreakForm, setShowBreakForm] = useState(false);
@@ -702,7 +702,7 @@ export default function AdminDashboard() {
             dayRules: [
               { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
               { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
-              { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: true },
+              { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: false },
             ],
             ...schoolInfoRes.data.timetable_config,
           });
@@ -960,8 +960,37 @@ export default function AdminDashboard() {
       // 5. Greedy Generation — honouring day rules and teacher conflicts
       const newAllocations: any[] = [];
       const teacherBusy: { [key: string]: boolean } = {};
+      // Track pre-placed periods so regular loop doesn't over-assign
+      const preplaced: { [sectionSubjectKey: string]: number } = {};
 
       const shuffledAssignments = [...phaseAssignments].sort(() => Math.random() - 0.5);
+
+      // 5a. Pre-place rules where noTeacher === false (e.g., Life Skills with class teacher)
+      for (const section of phaseSections) {
+        const sectionAssignments = phaseAssignments.filter(a => a.section_id === section.id);
+        for (const rule of resolvedDayRules.filter((r: any) => !r.noTeacher)) {
+          const matchingAssignment = sectionAssignments.find((a: any) =>
+            (a.subjects?.name ?? '').toLowerCase() === rule.label.toLowerCase()
+          );
+          if (matchingAssignment && matchingAssignment.teacher_id) {
+            const teacherKey = `${matchingAssignment.teacher_id}_${rule.day}_${rule.resolvedPeriod}`;
+            const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === rule.day && a.period === rule.resolvedPeriod);
+            if (!teacherBusy[teacherKey] && !isSectionBusy) {
+              newAllocations.push({
+                section_id: section.id,
+                subject_id: matchingAssignment.subject_id,
+                teacher_id: matchingAssignment.teacher_id,
+                day: rule.day,
+                period: rule.resolvedPeriod,
+                school_id,
+              });
+              teacherBusy[teacherKey] = true;
+              const key = `${section.id}_${matchingAssignment.subject_id}`;
+              preplaced[key] = (preplaced[key] || 0) + 1;
+            }
+          }
+        }
+      }
       
       const totalSteps = phaseSections.length;
       let currentStep = 0;
@@ -972,7 +1001,8 @@ export default function AdminDashboard() {
         let currentPeriodIdx = 0;
 
         for (const assignment of sectionAssignments) {
-          let periodsToAssign = assignment.periods_per_week || 0;
+          const preplacedCount = preplaced[`${section.id}_${assignment.subject_id}`] || 0;
+          let periodsToAssign = Math.max(0, (assignment.periods_per_week || 0) - preplacedCount);
           let attempts = 0;
           const maxAttempts = DAYS.length * availablePeriods.length * 3;
 
@@ -5310,6 +5340,10 @@ export default function AdminDashboard() {
                                 {['purple','green','blue','amber','red','slate'].map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
                               </select>
                             </div>
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <input type="checkbox" checked={!newDayRule.noTeacher} onChange={e => setNewDayRule({ ...newDayRule, noTeacher: !e.target.checked })} className="rounded" />
+                              <span className="text-[10px] font-bold text-slate-600">Assign allocated teacher (register subject)</span>
+                            </label>
                             <div className="flex gap-2 pt-1">
                               <button onClick={() => {
                                 if (!newDayRule.label.trim()) return;
@@ -5577,6 +5611,29 @@ export default function AdminDashboard() {
                                       const rule = resolvedRules.find((r: any) => r.day === day && r.resolvedPeriod === slot.name);
                                       if (rule) {
                                         const ruleStyle = ruleColorMap[rule.color] ?? ruleColorMap['slate'];
+                                        // For rules with a teacher (noTeacher: false), pull the actual allocation
+                                        if (!rule.noTeacher) {
+                                          const ruleAllocation = timetableAllocations.find(a =>
+                                            a.section_id === activeSection.id && a.day === day && a.period === slot.name
+                                          );
+                                          return (
+                                            <div key={sIdx} className={`flex items-start gap-3 px-4 py-3 border-l-4 ${ruleStyle}`}>
+                                              <div className="w-6 h-6 rounded-lg bg-white/60 flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5">{pNum}</div>
+                                              <div className="flex-1 min-w-0">
+                                                <div className="text-xs font-black uppercase tracking-widest truncate">{rule.label}</div>
+                                                <div className="text-[10px] opacity-70">{slot.start} – {slot.end}</div>
+                                                {ruleAllocation ? (
+                                                  <div className="text-[10px] font-medium opacity-80 truncate mt-0.5">
+                                                    {ruleAllocation.teachers?.first_name} {ruleAllocation.teachers?.last_name}
+                                                  </div>
+                                                ) : (
+                                                  <div className="text-[10px] opacity-50 italic">Teacher not yet assigned — regenerate timetable</div>
+                                                )}
+                                              </div>
+                                              <span className="text-[10px] font-bold uppercase tracking-wider opacity-60 shrink-0">Register</span>
+                                            </div>
+                                          );
+                                        }
                                         return (
                                           <div key={sIdx} className={`flex items-center gap-3 px-4 py-3 border-l-4 ${ruleStyle}`}>
                                             <div className="w-6 h-6 rounded-lg bg-white/60 flex items-center justify-center text-[10px] font-black text-inherit shrink-0">{pNum}</div>
