@@ -1947,7 +1947,7 @@ export default function AdminDashboard() {
         <td style="text-align:center;font-weight:bold;color:${isPassed ? '#15803d' : '#dc2626'}">${isPassed ? 'PASS' : 'FAIL'}</td>
       </tr>`;
     }).join('');
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Learner List Report</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Learner Profiling</title>
     <style>
       body{font-family:Arial,sans-serif;padding:32px;font-size:12px;color:#111}
       .header{display:flex;align-items:center;gap:16px;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e2e8f0}
@@ -1967,7 +1967,7 @@ export default function AdminDashboard() {
       <div>
         <h1>${(schoolInfo as any)?.name || 'School'}</h1>
         ${schoolEmis ? `<p style="font-size:11px;color:#64748b;margin:0 0 2px 0">EMIS: ${schoolEmis}</p>` : ''}
-        <h2>Learner List Report</h2>
+        <h2>Learner Profiling</h2>
       </div>
     </div>
     <div class="meta">
@@ -2272,7 +2272,7 @@ export default function AdminDashboard() {
                 { id: 'results', label: 'Results Upload', icon: Upload },
                 { id: 'results-schedule', label: 'Results Schedule', icon: ClipboardList },
                 { id: 'stats', label: 'Curriculum Stats', icon: BarChart3 },
-                { id: 'learner-list', label: 'Learner List Report', icon: ClipboardList },
+                { id: 'learner-list', label: 'Learner Profiling', icon: ClipboardList },
                 { id: 'subject-ranking', label: 'Subject Ranking Report', icon: Trophy },
               ]
             },
@@ -3451,7 +3451,7 @@ export default function AdminDashboard() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Learner List Report</h2>
+                  <h2 className="text-2xl font-bold text-slate-900">Learner Profiling</h2>
                   <p className="text-sm text-slate-500 mt-1">Filter by grade, subject and achievement level then print.</p>
                 </div>
                 <button
