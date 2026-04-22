@@ -77,9 +77,18 @@ export default function SuperAdminDashboard() {
   const [newTasks, setNewTasks] = useState<any[]>([]);
   const [assigningTo, setAssigningTo] = useState<number[]>([]);
 
+  // Audit Logs State
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsFilter, setLogsFilter] = useState({ school_id: '', action: '', from: '', to: '' });
+
   useEffect(() => {
     fetchInitialData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'system-logs') fetchAuditLogs();
+  }, [activeTab]);
 
   const fetchInitialData = async () => {
     setLoading(true);
@@ -103,6 +112,25 @@ export default function SuperAdminDashboard() {
   const showMessage = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
     setTimeout(() => setMessage(null), 3000);
+  };
+
+  const fetchAuditLogs = async (filter = logsFilter) => {
+    setLogsLoading(true);
+    try {
+      let query = supabase
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (filter.school_id) query = query.eq('school_id', parseInt(filter.school_id));
+      if (filter.action) query = query.eq('action', filter.action);
+      if (filter.from) query = query.gte('created_at', filter.from);
+      if (filter.to) query = query.lte('created_at', filter.to + 'T23:59:59Z');
+      const { data } = await query;
+      setAuditLogs(data || []);
+    } finally {
+      setLogsLoading(false);
+    }
   };
 
   const handleAddSchool = async (e: React.FormEvent) => {
@@ -631,6 +659,159 @@ export default function SuperAdminDashboard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'system-logs' && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+                <div className="flex flex-wrap items-end gap-4 mb-6">
+                  <div className="flex-1 min-w-[180px] space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">School</label>
+                    <select
+                      value={logsFilter.school_id}
+                      onChange={(e) => setLogsFilter({ ...logsFilter, school_id: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">All Schools</option>
+                      {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[180px] space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Action Type</label>
+                    <select
+                      value={logsFilter.action}
+                      onChange={(e) => setLogsFilter({ ...logsFilter, action: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="">All Actions</option>
+                      <option value="result.publish">Results Published</option>
+                      <option value="result.unpublish">Results Unpublished</option>
+                      <option value="student.add">Student Added</option>
+                      <option value="student.delete">Student Deleted</option>
+                      <option value="student.upload">Students Uploaded</option>
+                      <option value="teacher.add">Teacher Added</option>
+                      <option value="teacher.delete">Teacher Deleted</option>
+                      <option value="timetable.generate">Timetable Generated</option>
+                      <option value="timetable.clear">Timetable Cleared</option>
+                      <option value="results.upload">Results Uploaded</option>
+                      <option value="attendance.mark">Attendance Marked</option>
+                      <option value="report.print">Report Printed</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[140px] space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">From</label>
+                    <input
+                      type="date"
+                      value={logsFilter.from}
+                      onChange={(e) => setLogsFilter({ ...logsFilter, from: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[140px] space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">To</label>
+                    <input
+                      type="date"
+                      value={logsFilter.to}
+                      onChange={(e) => setLogsFilter({ ...logsFilter, to: e.target.value })}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                  <button
+                    onClick={() => fetchAuditLogs(logsFilter)}
+                    className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-2xl font-bold text-sm hover:bg-primary-700 transition-all"
+                  >
+                    <RefreshCw className="w-4 h-4" /> Search
+                  </button>
+                  <button
+                    onClick={() => {
+                      const reset = { school_id: '', action: '', from: '', to: '' };
+                      setLogsFilter(reset);
+                      fetchAuditLogs(reset);
+                    }}
+                    className="px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-sm text-slate-500">{logsLoading ? 'Loading…' : `${auditLogs.length} event${auditLogs.length !== 1 ? 's' : ''} found`}</p>
+                </div>
+
+                {logsLoading ? (
+                  <div className="flex items-center justify-center py-20 text-slate-400">
+                    <RefreshCw className="w-6 h-6 animate-spin mr-3" /> Loading logs…
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                    <ClipboardList className="w-12 h-12 mb-3 opacity-30" />
+                    <p className="font-bold">No activity logs found</p>
+                    <p className="text-sm mt-1">Actions across all schools will appear here once logged.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">When</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">School</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">Role</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">User</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">Action</th>
+                          <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-widest">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {auditLogs.map((log) => {
+                          const school = schools.find(s => s.id === log.school_id);
+                          const actionMeta: Record<string, { label: string; colour: string }> = {
+                            'result.publish':    { label: 'Results Published',   colour: 'bg-emerald-100 text-emerald-700' },
+                            'result.unpublish':  { label: 'Results Unpublished', colour: 'bg-orange-100 text-orange-700' },
+                            'student.add':       { label: 'Student Added',       colour: 'bg-blue-100 text-blue-700' },
+                            'student.delete':    { label: 'Student Deleted',     colour: 'bg-red-100 text-red-700' },
+                            'student.upload':    { label: 'Students Uploaded',   colour: 'bg-violet-100 text-violet-700' },
+                            'teacher.add':       { label: 'Teacher Added',       colour: 'bg-blue-100 text-blue-700' },
+                            'teacher.delete':    { label: 'Teacher Deleted',     colour: 'bg-red-100 text-red-700' },
+                            'timetable.generate':{ label: 'Timetable Generated', colour: 'bg-cyan-100 text-cyan-700' },
+                            'timetable.clear':   { label: 'Timetable Cleared',   colour: 'bg-orange-100 text-orange-700' },
+                            'results.upload':    { label: 'Results Uploaded',    colour: 'bg-violet-100 text-violet-700' },
+                            'attendance.mark':   { label: 'Attendance Marked',   colour: 'bg-teal-100 text-teal-700' },
+                            'report.print':      { label: 'Report Printed',      colour: 'bg-slate-100 text-slate-700' },
+                          };
+                          const meta = actionMeta[log.action] ?? { label: log.action, colour: 'bg-slate-100 text-slate-600' };
+                          const details = log.details ?? {};
+                          const detailStr = Object.entries(details).map(([k, v]) => `${k}: ${v}`).join(' · ');
+                          const ts = new Date(log.created_at);
+                          return (
+                            <tr key={log.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                              <td className="px-6 py-4 text-slate-500 whitespace-nowrap">
+                                <div>{ts.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                                <div className="text-xs text-slate-400">{ts.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</div>
+                              </td>
+                              <td className="px-6 py-4 font-bold text-slate-700 whitespace-nowrap">{school?.name ?? `School ${log.school_id ?? '—'}`}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2.5 py-1 rounded-lg text-xs font-bold capitalize ${log.user_role === 'admin' ? 'bg-blue-50 text-blue-700' : log.user_role === 'teacher' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                                  {log.user_role ?? '—'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-slate-600 max-w-[180px] truncate">{log.user_name ?? '—'}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-3 py-1 rounded-xl text-xs font-bold ${meta.colour}`}>{meta.label}</span>
+                              </td>
+                              <td className="px-6 py-4 text-slate-500 text-xs max-w-[220px] truncate" title={detailStr}>{detailStr || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

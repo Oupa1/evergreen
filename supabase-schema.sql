@@ -398,3 +398,24 @@ BEGIN
         CREATE POLICY "Public Access" ON result_publications FOR ALL USING (true);
     END IF;
 END $$;
+
+-- 16. Audit Logs Table
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    school_id INTEGER,
+    user_role TEXT,
+    user_name TEXT,
+    user_id TEXT,
+    action TEXT NOT NULL,
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public Access' AND tablename = 'audit_logs') THEN
+        CREATE POLICY "Public Access" ON audit_logs FOR ALL USING (true);
+    END IF;
+END $$;

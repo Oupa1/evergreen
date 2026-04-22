@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { logAction } from '../lib/auditLog';
 import { Grade, Section, Subject, ClassSubject, Student, Result, Task } from '../types';
 import LearnerProfile from '../components/LearnerProfile';
 import { 
@@ -629,6 +630,7 @@ export default function AdminDashboard() {
 
       if (error) throw error;
       fetchResultPublications();
+      logAction(!currentStatus ? 'result.publish' : 'result.unpublish', { term, year });
       showMessage('success', `Results for ${term} ${year} ${!currentStatus ? 'published' : 'unpublished'} successfully!`);
     } catch (error: any) {
       showMessage('error', error.message);
@@ -1098,6 +1100,7 @@ export default function AdminDashboard() {
         const { error } = await supabase.from('timetable_allocations').insert(newAllocations);
         if (error) throw error;
         setGenerationProgress(100);
+        logAction('timetable.generate', { slots: newAllocations.length, phase: selectedPhase });
         showMessage('success', `Generated ${newAllocations.length} slots for ${selectedPhase === 'reception' ? 'Grade R' : selectedPhase === 'lower' ? 'Grades 1–3' : 'Grades 4–7'}`);
         fetchInitialData();
         setTimeout(() => setActiveTab('timetable-view'), 500);
@@ -1323,10 +1326,12 @@ export default function AdminDashboard() {
       'Delete Teacher',
       'Are you sure you want to delete this teacher?',
       async () => {
+        const teacher = teachers.find(t => t.id === id);
         const { error } = await supabase.from('teachers').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setTeachers(teachers.filter(t => t.id !== id));
+          logAction('teacher.delete', { name: teacher ? `${teacher.first_name} ${teacher.last_name}` : id });
           showMessage('success', 'Teacher deleted successfully');
         }
       }
@@ -1362,6 +1367,7 @@ export default function AdminDashboard() {
     if (error) showMessage('error', error.message);
     else {
       setTeachers([...teachers, data[0]]);
+      logAction('teacher.add', { name: `${newTeacher.first_name} ${newTeacher.last_name}`, email: newTeacher.email });
       setNewTeacher({ first_name: '', last_name: '', email: '', phone: '', password: 'teacher123' });
       showMessage('success', 'Teacher added successfully');
     }
@@ -1643,10 +1649,12 @@ export default function AdminDashboard() {
       'Delete Student',
       'Are you sure you want to delete this student?',
       async () => {
+        const student = allStudents.find(s => s.id === id);
         const { error } = await supabase.from('students').delete().eq('id', id).eq('school_id', school_id);
         if (error) showMessage('error', error.message);
         else {
           setAllStudents(allStudents.filter(s => s.id !== id));
+          logAction('student.delete', { name: student ? `${student.first_name} ${student.last_name}` : id, student_id: student?.student_id });
           showMessage('success', 'Student deleted successfully');
         }
       }
@@ -1718,7 +1726,10 @@ export default function AdminDashboard() {
       const learnersWithSchool = learners.map(l => ({ ...l, school_id }));
       const { error } = await supabase.from('students').insert(learnersWithSchool);
       if (error) showMessage('error', error.message);
-      else showMessage('success', `Uploaded ${learners.length} learners`);
+      else {
+        logAction('student.upload', { count: learners.length, section_id: sectionId });
+        showMessage('success', `Uploaded ${learners.length} learners`);
+      }
     };
     reader.readAsBinaryString(file);
   };
