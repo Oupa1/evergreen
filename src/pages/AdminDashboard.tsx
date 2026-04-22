@@ -5583,8 +5583,11 @@ export default function AdminDashboard() {
                         {activeSection && (
                           <>
                             <div className="flex items-center gap-3 mb-2">
-                              <span className="text-sm font-bold text-slate-700">Section:</span>
-                              <span className="text-sm font-bold text-primary-600">{activeSection.name}</span>
+                              <span className="px-4 py-1.5 bg-primary-50 border border-primary-100 rounded-full text-sm font-bold text-primary-700">
+                                {grades.find(g => g.id === activeSection.grade_id)?.name ?? 'Grade'}
+                                {' · '}
+                                {activeSection.name}
+                              </span>
                               {filteredSections.length > 1 && <span className="text-xs text-slate-400">(showing first match — use grade/section filter to narrow down)</span>}
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
@@ -5689,7 +5692,11 @@ export default function AdminDashboard() {
                         .map(section => (
                           <div key={section.id} className="page-break-after">
                             <h3 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2 flex items-center justify-between">
-                              <span>Grade & Section: {section.name}</span>
+                              <span>
+                                {grades.find(g => g.id === section.grade_id)?.name ?? 'Grade'}
+                                {' · '}
+                                <span className="text-primary-600">{section.name}</span>
+                              </span>
                               <span className="text-sm font-normal text-slate-500 no-print">{selectedPhase === 'lower' ? 'Lower Phase' : 'Higher Phase'}</span>
                             </h3>
                             <table className="w-full border-collapse border border-slate-200 text-sm">
