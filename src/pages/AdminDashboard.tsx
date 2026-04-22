@@ -417,15 +417,32 @@ export default function AdminDashboard() {
   const [viewTimetableGradeId, setViewTimetableGradeId] = useState('');
   const [viewTimetableSectionId, setViewTimetableSectionId] = useState('');
   const [generationProgress, setGenerationProgress] = useState(0);
-  const [timetableConfig, setTimetableConfig] = useState({
+  const [timetableConfig, setTimetableConfig] = useState<{
+    startTime: string;
+    periodDuration: number;
+    knockOffTime: string;
+    breaks: { name: string; startTime: string; duration: number }[];
+    dayRules: { id: string; day: string; period: string; label: string; color: string; noTeacher: boolean }[];
+    [key: string]: any;
+  }>({
     startTime: '08:00',
     periodDuration: 40,
     knockOffTime: '14:30',
     breaks: [
       { name: 'Short Break', startTime: '10:00', duration: 15 },
       { name: 'Lunch Break', startTime: '12:00', duration: 45 },
-    ]
+    ],
+    dayRules: [
+      { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
+      { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
+      { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: true },
+    ],
   });
+  const [showBreakForm, setShowBreakForm] = useState(false);
+  const [newBreakForm, setNewBreakForm] = useState({ name: '', startTime: '', duration: '' });
+  const [showDayRuleForm, setShowDayRuleForm] = useState(false);
+  const [newDayRule, setNewDayRule] = useState({ day: 'Monday', period: '1', label: '', color: 'slate', noTeacher: true });
+  const [ttViewMode, setTtViewMode] = useState<'grid' | 'dayview'>('grid');
 
   const getGradePhase = (gradeName: string) => {
     const lower = ['R', '1', '2', '3'];
@@ -682,6 +699,11 @@ export default function AdminDashboard() {
             periodDuration: 40,
             knockOffTime: '14:30',
             breaks: [],
+            dayRules: [
+              { id: 'r1', day: 'Tuesday', period: '4', label: 'DAAR', color: 'purple', noTeacher: true },
+              { id: 'r2', day: 'Wednesday', period: 'last', label: 'Sport', color: 'green', noTeacher: true },
+              { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: true },
+            ],
             ...schoolInfoRes.data.timetable_config,
           });
           if (schoolInfoRes.data.timetable_config.emis) {
@@ -919,11 +941,26 @@ export default function AdminDashboard() {
         throw new Error('No available periods found in the current configuration. Please check school hours.');
       }
 
-      // 5. Simple Greedy Generation
-      const newAllocations: any[] = [];
-      const teacherBusy: { [key: string]: boolean } = {}; // teacherId_day_period
+      // 4b. Resolve day rules – convert 'last' / 'second-to-last' to actual period names
+      const resolvedDayRules = (timetableConfig.dayRules ?? []).map((rule: any) => {
+        let resolvedPeriod = rule.period;
+        if (rule.period === 'last') {
+          resolvedPeriod = availablePeriods[availablePeriods.length - 1];
+        } else if (rule.period === 'second-to-last') {
+          resolvedPeriod = availablePeriods[availablePeriods.length - 2] ?? availablePeriods[availablePeriods.length - 1];
+        } else {
+          resolvedPeriod = `Period ${rule.period}`;
+        }
+        return { ...rule, resolvedPeriod };
+      });
 
-      // Shuffle assignments to get different results each time (optional)
+      const isReservedSlot = (day: string, period: string) =>
+        resolvedDayRules.some((r: any) => r.day === day && r.resolvedPeriod === period);
+
+      // 5. Greedy Generation — honouring day rules and teacher conflicts
+      const newAllocations: any[] = [];
+      const teacherBusy: { [key: string]: boolean } = {};
+
       const shuffledAssignments = [...phaseAssignments].sort(() => Math.random() - 0.5);
       
       const totalSteps = phaseSections.length;
@@ -937,17 +974,17 @@ export default function AdminDashboard() {
         for (const assignment of sectionAssignments) {
           let periodsToAssign = assignment.periods_per_week || 0;
           let attempts = 0;
-          const maxAttempts = DAYS.length * availablePeriods.length * 2;
+          const maxAttempts = DAYS.length * availablePeriods.length * 3;
 
           while (periodsToAssign > 0 && attempts < maxAttempts) {
             const day = DAYS[currentDayIdx];
             const period = availablePeriods[currentPeriodIdx];
             const teacherKey = `${assignment.teacher_id}_${day}_${period}`;
             
-            // Check if teacher is busy or section already has a class in this slot
             const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === day && a.period === period);
+            const isReserved = isReservedSlot(day, period);
             
-            if (!teacherBusy[teacherKey] && !isSectionBusy) {
+            if (!teacherBusy[teacherKey] && !isSectionBusy && !isReserved) {
               newAllocations.push({
                 section_id: section.id,
                 subject_id: assignment.subject_id,
@@ -960,7 +997,6 @@ export default function AdminDashboard() {
               periodsToAssign--;
             }
 
-            // Move to next slot
             currentPeriodIdx++;
             if (currentPeriodIdx >= availablePeriods.length) {
               currentPeriodIdx = 0;
@@ -974,7 +1010,6 @@ export default function AdminDashboard() {
         }
         currentStep++;
         setGenerationProgress(30 + Math.floor((currentStep / totalSteps) * 50));
-        // Small delay to show progress
         await new Promise(r => setTimeout(r, 100));
       }
 
@@ -5162,22 +5197,135 @@ export default function AdminDashboard() {
                             </button>
                           </div>
                         ))}
-                        <button 
-                          onClick={() => {
-                            const name = prompt('Break Name (e.g. Lunch)');
-                            const startTime = prompt('Start Time (HH:MM)');
-                            const duration = parseInt(prompt('Duration (minutes)') || '0');
-                            if (name && startTime && duration) {
-                              setTimetableConfig({
-                                ...timetableConfig,
-                                breaks: [...(timetableConfig.breaks ?? []), { name, startTime, duration }]
-                              });
-                            }
-                          }}
-                          className="w-full py-2 border-2 border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-all"
-                        >
-                          + Add Break
-                        </button>
+
+                        {showBreakForm ? (
+                          <div className="bg-white border border-primary-200 rounded-xl p-3 space-y-2">
+                            <input
+                              type="text"
+                              placeholder="Break name (e.g. Lunch)"
+                              value={newBreakForm.name}
+                              onChange={e => setNewBreakForm({ ...newBreakForm, name: e.target.value })}
+                              className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none"
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Start Time</label>
+                                <input
+                                  type="time"
+                                  value={newBreakForm.startTime}
+                                  onChange={e => setNewBreakForm({ ...newBreakForm, startTime: e.target.value })}
+                                  className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Duration (min)</label>
+                                <input
+                                  type="number"
+                                  min="5"
+                                  placeholder="15"
+                                  value={newBreakForm.duration}
+                                  onChange={e => setNewBreakForm({ ...newBreakForm, duration: e.target.value })}
+                                  className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                onClick={() => {
+                                  const d = parseInt(newBreakForm.duration) || 0;
+                                  if (newBreakForm.name && newBreakForm.startTime && d > 0) {
+                                    setTimetableConfig({
+                                      ...timetableConfig,
+                                      breaks: [...(timetableConfig.breaks ?? []), { name: newBreakForm.name, startTime: newBreakForm.startTime, duration: d }]
+                                    });
+                                    setNewBreakForm({ name: '', startTime: '', duration: '' });
+                                    setShowBreakForm(false);
+                                  }
+                                }}
+                                className="flex-1 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-bold hover:bg-primary-700 transition-all"
+                              >
+                                Add Break
+                              </button>
+                              <button
+                                onClick={() => { setShowBreakForm(false); setNewBreakForm({ name: '', startTime: '', duration: '' }); }}
+                                className="flex-1 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setShowBreakForm(true)}
+                            className="w-full py-2 border-2 border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-all"
+                          >
+                            + Add Break
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Day Rules */}
+                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                      <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-primary-600" />
+                        Day Rules
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mb-3">Fixed periods reserved per day (overrides subject allocation)</p>
+                      <div className="space-y-2">
+                        {(timetableConfig.dayRules ?? []).map((rule: any) => {
+                          const colorMap: Record<string, string> = { purple: 'bg-purple-100 text-purple-700', green: 'bg-emerald-100 text-emerald-700', blue: 'bg-blue-100 text-blue-700', slate: 'bg-slate-100 text-slate-700', amber: 'bg-amber-100 text-amber-700', red: 'bg-red-100 text-red-700' };
+                          const chip = colorMap[rule.color] ?? 'bg-slate-100 text-slate-700';
+                          return (
+                            <div key={rule.id} className="flex items-center gap-2 bg-white p-2.5 rounded-xl border border-slate-200">
+                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${chip}`}>{rule.label}</span>
+                              <div className="flex-1 text-xs text-slate-600"><span className="font-bold">{rule.day}</span> · Period {rule.period === 'last' ? 'Last' : rule.period === 'second-to-last' ? '2nd-to-last' : rule.period}</div>
+                              <button onClick={() => setTimetableConfig({ ...timetableConfig, dayRules: (timetableConfig.dayRules ?? []).filter((r: any) => r.id !== rule.id) })} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+
+                        {showDayRuleForm ? (
+                          <div className="bg-white border border-primary-200 rounded-xl p-3 space-y-2">
+                            <input type="text" placeholder="Label (e.g. Assembly)" value={newDayRule.label} onChange={e => setNewDayRule({ ...newDayRule, label: e.target.value })} className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none" />
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Day</label>
+                                <select value={newDayRule.day} onChange={e => setNewDayRule({ ...newDayRule, day: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none">
+                                  {['Monday','Tuesday','Wednesday','Thursday','Friday'].map(d => <option key={d}>{d}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase">Period</label>
+                                <select value={newDayRule.period} onChange={e => setNewDayRule({ ...newDayRule, period: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none">
+                                  {['1','2','3','4','5','6','7','8','last','second-to-last'].map(p => <option key={p} value={p}>{p === 'last' ? 'Last' : p === 'second-to-last' ? '2nd-to-last' : `Period ${p}`}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">Colour</label>
+                              <select value={newDayRule.color} onChange={e => setNewDayRule({ ...newDayRule, color: e.target.value })} className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none">
+                                {['purple','green','blue','amber','red','slate'].map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                              </select>
+                            </div>
+                            <div className="flex gap-2 pt-1">
+                              <button onClick={() => {
+                                if (!newDayRule.label.trim()) return;
+                                const id = `r${Date.now()}`;
+                                setTimetableConfig({ ...timetableConfig, dayRules: [...(timetableConfig.dayRules ?? []), { ...newDayRule, id }] });
+                                setNewDayRule({ day: 'Monday', period: '1', label: '', color: 'slate', noTeacher: true });
+                                setShowDayRuleForm(false);
+                              }} className="flex-1 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-bold hover:bg-primary-700 transition-all">Add Rule</button>
+                              <button onClick={() => setShowDayRuleForm(false)} className="flex-1 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all">Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button onClick={() => setShowDayRuleForm(true)} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-all">
+                            + Add Rule
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -5297,6 +5445,11 @@ export default function AdminDashboard() {
                       </select>
                     </div>
 
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      <button onClick={() => setTtViewMode('grid')} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${ttViewMode === 'grid' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Grid</button>
+                      <button onClick={() => setTtViewMode('dayview')} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${ttViewMode === 'dayview' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Day View</button>
+                    </div>
+
                     <button 
                       onClick={() => window.print()}
                       className="p-3 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-all"
@@ -5371,7 +5524,102 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {timetableType === 'consolidated' ? (
+                  {ttViewMode === 'dayview' ? (() => {
+                    const allSlots = calculatePeriodTimes();
+                    const periodSlots = allSlots.filter(s => !s.isBreak);
+                    const resolvedRules = (timetableConfig.dayRules ?? []).map((rule: any) => {
+                      let rp = rule.period;
+                      if (rule.period === 'last') rp = periodSlots[periodSlots.length - 1]?.name ?? '';
+                      else if (rule.period === 'second-to-last') rp = periodSlots[periodSlots.length - 2]?.name ?? periodSlots[periodSlots.length - 1]?.name ?? '';
+                      else rp = `Period ${rule.period}`;
+                      return { ...rule, resolvedPeriod: rp };
+                    });
+                    const ruleColorMap: Record<string, string> = { purple: 'bg-purple-100 border-purple-200 text-purple-800', green: 'bg-emerald-100 border-emerald-200 text-emerald-800', blue: 'bg-blue-100 border-blue-200 text-blue-800', amber: 'bg-amber-100 border-amber-200 text-amber-800', red: 'bg-red-100 border-red-200 text-red-800', slate: 'bg-slate-100 border-slate-200 text-slate-700' };
+                    const filteredSections = sections.filter(s => {
+                      const gradeName = grades.find(g => g.id === s.grade_id)?.name || '';
+                      const matchesPhase = getGradePhase(gradeName) === selectedPhase;
+                      const matchesGrade = !viewTimetableGradeId || s.grade_id === viewTimetableGradeId;
+                      const matchesSec = !viewTimetableSectionId || s.id === viewTimetableSectionId;
+                      return matchesPhase && matchesGrade && matchesSec;
+                    });
+                    const activeSection = filteredSections[0];
+                    return (
+                      <div className="space-y-6">
+                        {!activeSection && <p className="text-center text-slate-400 italic py-12">Select a grade/section to view the day-by-day timetable.</p>}
+                        {activeSection && (
+                          <>
+                            <div className="flex items-center gap-3 mb-2">
+                              <span className="text-sm font-bold text-slate-700">Section:</span>
+                              <span className="text-sm font-bold text-primary-600">{activeSection.name}</span>
+                              {filteredSections.length > 1 && <span className="text-xs text-slate-400">(showing first match — use grade/section filter to narrow down)</span>}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                              {DAYS.map(day => (
+                                <div key={day} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                                  <div className="bg-primary-600 text-white px-5 py-3 flex items-center justify-between">
+                                    <span className="font-black text-base tracking-wide">{day}</span>
+                                    <span className="text-xs text-primary-200 font-medium">{allSlots.filter(s => !s.isBreak).length} periods</span>
+                                  </div>
+                                  <div className="divide-y divide-slate-100">
+                                    {allSlots.map((slot, sIdx) => {
+                                      if (slot.isBreak) {
+                                        return (
+                                          <div key={sIdx} className="flex items-center gap-3 px-4 py-2 bg-amber-50">
+                                            <div className="w-2 h-2 rounded-full bg-amber-400" />
+                                            <div className="flex-1">
+                                              <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">{slot.name}</span>
+                                              <span className="text-[10px] text-amber-500 ml-2">{slot.start} – {slot.end}</span>
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      const pNum = sIdx + 1 - allSlots.slice(0, sIdx + 1).filter(s => s.isBreak).length;
+                                      const rule = resolvedRules.find((r: any) => r.day === day && r.resolvedPeriod === slot.name);
+                                      if (rule) {
+                                        const ruleStyle = ruleColorMap[rule.color] ?? ruleColorMap['slate'];
+                                        return (
+                                          <div key={sIdx} className={`flex items-center gap-3 px-4 py-3 border-l-4 ${ruleStyle}`}>
+                                            <div className="w-6 h-6 rounded-lg bg-white/60 flex items-center justify-center text-[10px] font-black text-inherit shrink-0">{pNum}</div>
+                                            <div className="flex-1">
+                                              <div className="text-xs font-black uppercase tracking-widest">{rule.label}</div>
+                                              <div className="text-[10px] opacity-70">{slot.start} – {slot.end}</div>
+                                            </div>
+                                            <span className="text-[10px] font-bold uppercase tracking-wider opacity-60">Fixed</span>
+                                          </div>
+                                        );
+                                      }
+                                      const allocation = timetableAllocations.find(a =>
+                                        a.section_id === activeSection.id && a.day === day && a.period === slot.name
+                                      );
+                                      return (
+                                        <div key={sIdx} className={`flex items-start gap-3 px-4 py-3 ${allocation ? '' : 'opacity-50'}`}>
+                                          <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5 ${allocation ? 'bg-primary-100 text-primary-700' : 'bg-slate-100 text-slate-400'}`}>{pNum}</div>
+                                          <div className="flex-1 min-w-0">
+                                            {allocation ? (
+                                              <>
+                                                <div className="text-xs font-bold text-slate-900 truncate">{allocation.subjects?.name}</div>
+                                                <div className="text-[10px] text-slate-500">{slot.start} – {slot.end}</div>
+                                                <div className="text-[10px] text-primary-500 font-medium truncate">{allocation.teachers?.first_name} {allocation.teachers?.last_name}</div>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <div className="text-xs text-slate-400 italic">Free Period</div>
+                                                <div className="text-[10px] text-slate-300">{slot.start} – {slot.end}</div>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })() : timetableType === 'consolidated' ? (
                     <div className="space-y-12">
                       {sections
                         .filter(s => {
