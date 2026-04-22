@@ -125,9 +125,16 @@ export default function Navbar() {
                 </Link>
               ))}
               <Link
+                to="/login"
+                onClick={() => setIsOpen(false)}
+                className="text-lg font-medium py-2 border-b border-slate-50 text-slate-600"
+              >
+                Login
+              </Link>
+              <Link
                 to="/admissions"
                 onClick={() => setIsOpen(false)}
-                className="bg-primary-600 text-white px-5 py-3 rounded-xl text-center font-semibold mt-4"
+                className="bg-primary-600 text-white px-5 py-3 rounded-xl text-center font-semibold mt-2"
               >
                 Apply Now
               </Link>
