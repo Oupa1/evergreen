@@ -129,6 +129,74 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
   }
 }
 
+export async function generateCAPSTermPlan(
+  subject: string,
+  grade: string,
+  term: string,
+  totalWeeks: number,
+  topic?: string
+) {
+  if (!apiKey) {
+    throw new Error("AI lesson plan generation is currently unavailable. Please configure the Gemini API key.");
+  }
+
+  const model = "gemini-3-flash-preview";
+  const topicInstruction = topic
+    ? `The teacher wants the term to focus on: "${topic}". Build a coherent week-by-week progression around this focus.`
+    : `Use the official CAPS curriculum sequence for ${subject} ${grade} ${term}.`;
+
+  const prompt = `You are an expert South African educator specialising in the CAPS (Curriculum and Assessment Policy Statement) curriculum.
+
+Generate a comprehensive, CAPS-aligned FULL TERM lesson plan overview for:
+- Subject: ${subject}
+- Grade: ${grade}
+- Term: ${term}
+- Total Weeks: ${totalWeeks}
+- ${topicInstruction}
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no code fences):
+{
+  "termOverview": {
+    "subject": "${subject}",
+    "grade": "${grade}",
+    "term": "${term}",
+    "totalWeeks": ${totalWeeks},
+    "focus": "One-sentence summary of what this term covers",
+    "strand": "Main CAPS content area or strand for this term",
+    "formalAssessmentTasks": ["e.g. Test Week 5", "Assignment Week 8", "..."],
+    "teachingApproach": "Brief description of the main pedagogical approach for this term"
+  },
+  "weeklyPlans": [
+    {
+      "week": 1,
+      "topic": "Exact CAPS topic",
+      "subTopic": "Specific concept or sub-topic",
+      "objectives": ["Learners will be able to...", "Learners will demonstrate..."],
+      "keyActivities": "Brief description of main teacher and learner activities",
+      "resources": ["Textbook p. XX", "Worksheet", "..."],
+      "assessment": "Type and method of assessment for this week",
+      "homework": "Brief homework task or 'Classwork completion'"
+    }
+  ],
+  "termReflection": "Space for teacher to note what worked, what to adjust, and whether CAPS pace was maintained across the term"
+}
+
+Generate a weeklyPlan entry for EVERY week from 1 to ${totalWeeks}. Ensure topics follow the official CAPS sequence and build progressively across the term.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: prompt,
+    });
+    const text = response.text || '';
+    const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error("Gemini Term Plan Error:", error);
+    throw new Error("Failed to generate term plan. Please try again.");
+  }
+}
+
 export async function generateQuizFromImage(base64Image: string, mimeType: string) {
   if (!apiKey) {
     throw new Error("AI quiz generation is currently unavailable. Please configure the Gemini API key.");
