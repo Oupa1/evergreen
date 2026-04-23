@@ -74,7 +74,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useTheme } from '../components/ThemeProvider';
 
-type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications' | 'meetings';
+type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications' | 'meetings' | 'sports-day';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -342,6 +342,11 @@ export default function AdminDashboard() {
   const [meetingForm, setMeetingForm] = useState({ title: '', description: '', date: '', time: '', location: '' });
   const [meetingEditId, setMeetingEditId] = useState<string | null>(null);
   const [savingMeeting, setSavingMeeting] = useState(false);
+  // Sports Day state
+  const [sportEvents, setSportEvents] = useState<any[]>([]);
+  const [sportForm, setSportForm] = useState({ name: '', image_url: '', date: '', description: '' });
+  const [sportEditId, setSportEditId] = useState<string | null>(null);
+  const [savingSport, setSavingSport] = useState(false);
   // SMS History state
   const [smsHistory, setSmsHistory] = useState<any[]>([]);
   // Applications state
@@ -514,6 +519,9 @@ export default function AdminDashboard() {
     }
     if (activeTab === 'meetings') {
       fetchMeetings();
+    }
+    if (activeTab === 'sports-day') {
+      fetchSportEvents();
     }
   }, [activeTab, schoolInfo.sms_config]);
 
@@ -1005,6 +1013,69 @@ export default function AdminDashboard() {
     const timeStr = d.toTimeString().slice(0, 5);
     setMeetingForm({ title: m.title, description: m.description || '', date: dateStr, time: timeStr, location: m.location || '' });
     setMeetingEditId(m.id);
+  };
+
+  // ── SPORTS DAY ──
+  const fetchSportEvents = async () => {
+    const { data } = await supabase
+      .from('sports_events')
+      .select('*')
+      .eq('school_id', school_id)
+      .order('date', { ascending: true });
+    setSportEvents(data || []);
+  };
+
+  const resetSportForm = () => {
+    setSportForm({ name: '', image_url: '', date: '', description: '' });
+    setSportEditId(null);
+  };
+
+  const handleSaveSport = async () => {
+    if (!sportForm.name.trim() || !sportForm.date) {
+      showMessage('error', 'Sport name and date are required');
+      return;
+    }
+    setSavingSport(true);
+    try {
+      const payload = {
+        name: sportForm.name.trim(),
+        image_url: sportForm.image_url.trim() || null,
+        date: sportForm.date,
+        description: sportForm.description.trim() || null,
+        school_id,
+      };
+      if (sportEditId) {
+        const { error } = await supabase.from('sports_events').update(payload).eq('id', sportEditId);
+        if (error) throw error;
+        showMessage('success', 'Sports event updated');
+      } else {
+        const { error } = await supabase.from('sports_events').insert([payload]);
+        if (error) throw error;
+        showMessage('success', 'Sports event added — teachers and learners will see it immediately');
+      }
+      resetSportForm();
+      fetchSportEvents();
+    } catch (err: any) {
+      showMessage('error', err.message);
+    } finally {
+      setSavingSport(false);
+    }
+  };
+
+  const handleDeleteSport = (id: string) => {
+    askConfirmation('Delete Sports Event', 'Remove this sports event? It will no longer be visible to teachers or learners.', async () => {
+      const { error } = await supabase.from('sports_events').delete().eq('id', id);
+      if (error) showMessage('error', error.message);
+      else {
+        setSportEvents(prev => prev.filter(s => s.id !== id));
+        showMessage('success', 'Event removed');
+      }
+    });
+  };
+
+  const startEditSport = (s: any) => {
+    setSportForm({ name: s.name, image_url: s.image_url || '', date: s.date, description: s.description || '' });
+    setSportEditId(s.id);
   };
 
   // ── SMS HISTORY ──
@@ -2753,6 +2824,7 @@ export default function AdminDashboard() {
                 { id: 'sms-config', label: 'SMS Configuration', icon: Settings2 },
                 { id: 'noticeboard', label: 'Noticeboard & Gallery', icon: Bell },
                 { id: 'meetings', label: 'Meetings', icon: Calendar },
+                { id: 'sports-day', label: 'Sports Day', icon: Trophy },
               ]
             },
             {
@@ -6972,6 +7044,138 @@ export default function AdminDashboard() {
             )}
 
             {/* SMS History section - rendered inside the SMS tab */}
+
+            {activeTab === 'sports-day' && (
+              <motion.div key="sports-day" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6 p-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <Trophy className="w-6 h-6 text-primary-600" /> Sports Day Events
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-1">Add sports for an upcoming sports day — teachers and learners will see the date, image and details on their dashboards.</p>
+                </div>
+
+                {/* Form */}
+                <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                  <h3 className="text-sm font-bold text-slate-700 mb-4">
+                    {sportEditId ? 'Edit Sports Event' : 'Add New Sport / Event'}
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Sport / Event Name *</label>
+                      <input
+                        value={sportForm.name}
+                        onChange={e => setSportForm({ ...sportForm, name: e.target.value })}
+                        placeholder="e.g. 100m Sprint, Swimming Gala, Tug of War"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Date *</label>
+                      <input
+                        type="date"
+                        value={sportForm.date}
+                        onChange={e => setSportForm({ ...sportForm, date: e.target.value })}
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Image URL <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                      <input
+                        value={sportForm.image_url}
+                        onChange={e => setSportForm({ ...sportForm, image_url: e.target.value })}
+                        placeholder="https://example.com/sport.jpg"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wide">Description <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                      <textarea
+                        value={sportForm.description}
+                        onChange={e => setSportForm({ ...sportForm, description: e.target.value })}
+                        rows={2}
+                        placeholder="Any extra details — venue, rules, what to bring…"
+                        className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 resize-none"
+                      />
+                    </div>
+                    {sportForm.image_url && (
+                      <div className="sm:col-span-2">
+                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Image Preview</p>
+                        <img
+                          src={sportForm.image_url}
+                          alt="Preview"
+                          className="h-32 w-full object-cover rounded-xl border border-slate-100"
+                          onError={e => (e.currentTarget.style.display = 'none')}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      onClick={handleSaveSport}
+                      disabled={savingSport || !sportForm.name.trim() || !sportForm.date}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white rounded-2xl text-sm font-bold hover:bg-primary-700 transition-all shadow-sm disabled:opacity-50"
+                    >
+                      {savingSport ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trophy className="w-4 h-4" />}
+                      {sportEditId ? 'Update Event' : 'Add Event'}
+                    </button>
+                    {sportEditId && (
+                      <button
+                        onClick={resetSportForm}
+                        className="px-5 py-2.5 border border-slate-200 rounded-2xl text-sm font-bold hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Events List */}
+                {sportEvents.length === 0 ? (
+                  <div className="bg-slate-50 rounded-[2rem] border border-slate-200 p-10 text-center text-slate-400">
+                    <Trophy className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">No sports events added yet</p>
+                    <p className="text-sm mt-1">Add one above — it will appear on every teacher's and learner's dashboard straight away.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {sportEvents.map((s: any) => {
+                      const dt = new Date(s.date + 'T00:00:00');
+                      const isPast = dt < new Date(new Date().toDateString());
+                      return (
+                        <div key={s.id} className={`bg-white rounded-[1.5rem] border ${isPast ? 'border-slate-100 opacity-60' : 'border-slate-200'} shadow-sm overflow-hidden flex flex-col`}>
+                          {s.image_url ? (
+                            <img src={s.image_url} alt={s.name} className="w-full h-36 object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                          ) : (
+                            <div className="w-full h-36 bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center">
+                              <Trophy className="w-12 h-12 text-primary-300" />
+                            </div>
+                          )}
+                          <div className="p-4 flex-1 flex flex-col gap-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="font-bold text-slate-900 text-base leading-tight">{s.name}</h4>
+                              {isPast && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide flex-shrink-0">Past</span>}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-primary-600">
+                              <Calendar className="w-3.5 h-3.5" />
+                              {dt.toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}
+                            </div>
+                            {s.description && <p className="text-xs text-slate-500 leading-relaxed">{s.description}</p>}
+                            <div className="flex gap-2 mt-auto pt-2">
+                              <button onClick={() => startEditSport(s)} className="flex-1 py-1.5 text-xs font-bold border border-slate-200 rounded-xl hover:bg-slate-50 flex items-center justify-center gap-1">
+                                <Edit2 className="w-3 h-3" /> Edit
+                              </button>
+                              <button onClick={() => handleDeleteSport(s.id)} className="flex-1 py-1.5 text-xs font-bold border border-red-100 text-red-500 rounded-xl hover:bg-red-50 flex items-center justify-center gap-1">
+                                <Trash2 className="w-3 h-3" /> Remove
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            )}
 
             {selectedProfileStudent && (
               <LearnerProfile 

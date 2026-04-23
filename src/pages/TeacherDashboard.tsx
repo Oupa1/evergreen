@@ -77,6 +77,7 @@ export default function TeacherDashboard() {
   const [teacherTimetable, setTeacherTimetable] = useState<any[]>([]);
   const [timetableView, setTimetableView] = useState<'personal' | 'class'>('personal');
   const [meetings, setMeetings] = useState<any[]>([]);
+  const [sportEvents, setSportEvents] = useState<any[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [resultPublications, setResultPublications] = useState<any[]>([]);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
@@ -271,6 +272,14 @@ export default function TeacherDashboard() {
         .eq('school_id', school_id)
         .order('date', { ascending: true });
       setMeetings(meetingsData || []);
+
+      // Fetch sports events
+      const { data: sportsData } = await supabase
+        .from('sports_events')
+        .select('*')
+        .eq('school_id', school_id)
+        .order('date', { ascending: true });
+      setSportEvents(sportsData || []);
 
       // Fetch teacher's personal timetable
       const { data: personalTimetableData } = await supabase
@@ -1988,13 +1997,47 @@ export default function TeacherDashboard() {
               <div className="max-w-4xl mx-auto space-y-8">
                 <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between">
                   <div>
-                    <h3 className="text-2xl font-bold text-slate-900">Meetings & Reminders</h3>
-                    <p className="text-slate-500 mt-1">Stay updated with staff meetings and school events.</p>
+                    <h3 className="text-2xl font-bold text-slate-900">Meetings & Events</h3>
+                    <p className="text-slate-500 mt-1">Stay updated with staff meetings and upcoming sports day events.</p>
                   </div>
                   <div className="w-16 h-16 bg-primary-50 rounded-2xl flex items-center justify-center text-primary-600">
                     <Bell className="w-8 h-8" />
                   </div>
                 </div>
+
+                {/* Sports Day Events */}
+                {sportEvents.length > 0 && (
+                  <div>
+                    <h4 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
+                      <Trophy className="w-5 h-5 text-amber-500" /> Upcoming Sports Day Events
+                    </h4>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {sportEvents.map((s: any) => {
+                        const dt = new Date(s.date + 'T00:00:00');
+                        const isPast = dt < new Date(new Date().toDateString());
+                        return (
+                          <div key={s.id} className={`bg-white rounded-2xl border ${isPast ? 'border-slate-100 opacity-60' : 'border-amber-100'} shadow-sm overflow-hidden flex gap-0 flex-col`}>
+                            {s.image_url && (
+                              <img src={s.image_url} alt={s.name} className="w-full h-28 object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                            )}
+                            <div className="p-4 flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <Trophy className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                <span className="font-bold text-slate-900">{s.name}</span>
+                                {isPast && <span className="ml-auto text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase">Past</span>}
+                              </div>
+                              <div className="flex items-center gap-1.5 text-xs font-bold text-primary-600">
+                                <Calendar className="w-3.5 h-3.5" />
+                                {dt.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                              </div>
+                              {s.description && <p className="text-xs text-slate-500 mt-1">{s.description}</p>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   {meetings.map((meeting) => (

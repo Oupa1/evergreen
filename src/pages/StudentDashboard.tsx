@@ -53,7 +53,7 @@ const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: n
   return PASS_MARKS[name] || defaultPassMark || 40;
 };
 
-type Tab = 'overview' | 'results' | 'timetable' | 'tasks' | 'materials';
+type Tab = 'overview' | 'results' | 'timetable' | 'tasks' | 'materials' | 'sports';
 
 const PuzzlePlayer = ({ image, onComplete }: { image: string, onComplete: () => void }) => {
   const [pieces, setPieces] = useState<number[]>([]);
@@ -300,6 +300,7 @@ export default function StudentDashboard() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [resultPublications, setResultPublications] = useState<any[]>([]);
+  const [sportEvents, setSportEvents] = useState<any[]>([]);
   const [selectedTask, setSelectedTask] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -404,6 +405,14 @@ export default function StudentDashboard() {
           .eq('school_id', school_id);
         
         if (resPubsData) setResultPublications(resPubsData);
+
+        // Fetch sports events
+        const { data: sportsData } = await supabase
+          .from('sports_events')
+          .select('*')
+          .eq('school_id', school_id)
+          .order('date', { ascending: true });
+        if (sportsData) setSportEvents(sportsData);
       }
     } catch (error) {
       console.error('Error fetching student data:', error);
@@ -755,13 +764,43 @@ export default function StudentDashboard() {
                     </div>
                   </div>
 
-                  {/* Announcements */}
+                  {/* Sports Day Events */}
                   <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm p-8">
-                    <h3 className="text-xl font-bold text-slate-900 mb-6">Announcements</h3>
-                    <div className="flex flex-col items-center justify-center py-8 text-slate-400">
-                      <Bell className="w-12 h-12 mb-4 opacity-20" />
-                      <p className="text-sm">No new announcements</p>
-                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-1 flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-amber-500" /> Sports Day
+                    </h3>
+                    <p className="text-xs text-slate-400 mb-5">Upcoming sports events at your school</p>
+                    {sportEvents.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-6 text-slate-400">
+                        <Trophy className="w-10 h-10 mb-3 opacity-20" />
+                        <p className="text-sm">No sports events yet</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {sportEvents.map((s: any) => {
+                          const dt = new Date(s.date + 'T00:00:00');
+                          const isPast = dt < new Date(new Date().toDateString());
+                          return (
+                            <div key={s.id} className={`rounded-2xl border overflow-hidden ${isPast ? 'border-slate-100 opacity-60' : 'border-amber-100 bg-amber-50/40'}`}>
+                              {s.image_url && (
+                                <img src={s.image_url} alt={s.name} className="w-full h-24 object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                              )}
+                              <div className="p-3 flex flex-col gap-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-slate-900 text-sm">{s.name}</span>
+                                  {isPast && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold uppercase flex-shrink-0">Past</span>}
+                                </div>
+                                <div className="flex items-center gap-1 text-xs font-bold text-primary-600">
+                                  <Calendar className="w-3 h-3" />
+                                  {dt.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                </div>
+                                {s.description && <p className="text-xs text-slate-500">{s.description}</p>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
