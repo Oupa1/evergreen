@@ -28,11 +28,11 @@ export default function Hero() {
             <span className="inline-block px-4 py-1.5 bg-primary-600/20 text-primary-400 rounded-full text-sm font-semibold mb-6 border border-primary-500/30 backdrop-blur-sm">
               Excellence in Education
             </span>
-            <h1 className="text-5xl md:text-7xl font-bold text-white leading-[1.1] mb-8">
+            <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold text-white leading-[1.1] mb-6 md:mb-8">
               Nurturing Minds, <br />
               <span className="text-primary-500 italic font-serif">Inspiring Futures.</span>
             </h1>
-            <p className="text-xl text-slate-300 mb-10 leading-relaxed">
+            <p className="text-base md:text-xl text-slate-300 mb-8 md:mb-10 leading-relaxed">
               At {school?.name || 'Evergreen Academy'}, we provide a world-class education that combines academic rigor with character development and creative exploration.
             </p>
 
@@ -57,7 +57,7 @@ export default function Hero() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8, duration: 1 }}
-            className="mt-16 flex items-center gap-8"
+            className="mt-10 md:mt-16 flex flex-wrap items-center gap-4 md:gap-8"
           >
             <div className="flex -space-x-4">
               {[1, 2, 3, 4].map((i) => (

@@ -65,7 +65,7 @@ export default function TeacherDashboard() {
   const school_id_raw = localStorage.getItem('school_id');
   const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const [activeTab, setActiveTab] = useState<Tab>('overview');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [teacher, setTeacher] = useState<any>(null);
   const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
   const [selectedClass, setSelectedClass] = useState<any>(null);

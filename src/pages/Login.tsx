@@ -147,18 +147,18 @@ export default function Login() {
   };
 
   return (
-    <main className="min-h-screen pt-20 flex items-center justify-center bg-slate-50 px-6">
+    <main className="min-h-screen pt-16 sm:pt-20 flex items-center justify-center bg-slate-50 px-4 sm:px-6 py-8">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden"
+        className="w-full max-w-md bg-white rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl border border-slate-100 overflow-hidden"
       >
-        <div className="p-8 md:p-12">
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-2xl text-white mb-6 shadow-lg shadow-primary-600/20">
-              <GraduationCap className="w-8 h-8" />
+        <div className="p-6 sm:p-8 md:p-12">
+          <div className="text-center mb-6 sm:mb-10">
+            <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-primary-600 rounded-2xl text-white mb-4 sm:mb-6 shadow-lg shadow-primary-600/20">
+              <GraduationCap className="w-7 h-7 sm:w-8 sm:h-8" />
             </div>
-            <h1 className="text-3xl font-bold text-slate-900">Welcome Back</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Welcome Back</h1>
             <p className="text-slate-500 mt-2">Please enter your details to sign in</p>
             
             {/* Clickable Demo Credentials */}
@@ -218,39 +218,23 @@ export default function Login() {
           </div>
 
           {/* Role Selector */}
-          <div className="flex p-1 bg-slate-100 rounded-2xl mb-8">
-            <button
-              onClick={() => setRole('student')}
-              className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                role === 'student' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Student
-            </button>
-            <button
-              onClick={() => setRole('teacher')}
-              className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                role === 'teacher' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Teacher
-            </button>
-            <button
-              onClick={() => setRole('admin')}
-              className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                role === 'admin' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Admin
-            </button>
-            <button
-              onClick={() => setRole('super_admin')}
-              className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                role === 'super_admin' ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Super Admin
-            </button>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl mb-8">
+            {([
+              { key: 'student',     label: 'Student' },
+              { key: 'teacher',     label: 'Teacher' },
+              { key: 'admin',       label: 'Admin' },
+              { key: 'super_admin', label: 'Super Admin' },
+            ] as const).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setRole(key)}
+                className={`py-2.5 rounded-xl text-sm font-bold transition-all ${
+                  role === key ? 'bg-white text-primary-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">

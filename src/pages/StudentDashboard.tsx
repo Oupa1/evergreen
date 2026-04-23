@@ -286,7 +286,7 @@ export default function StudentDashboard() {
   const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('results');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [schoolInfo, setSchoolInfo] = useState({
     name: 'Evergreen Academy',
     logo: '',
