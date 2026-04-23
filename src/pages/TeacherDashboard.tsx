@@ -1581,6 +1581,34 @@ export default function TeacherDashboard() {
                     </div>
                   </div>
 
+                  {/* Class selector — shown for both views */}
+                  {assignedClasses.length > 1 ? (
+                    <div className="flex items-center gap-3 mb-6 p-3 bg-slate-50 rounded-2xl border border-slate-200">
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">Class:</span>
+                      <div className="flex flex-wrap gap-2">
+                        {assignedClasses.map(c => (
+                          <button
+                            key={c.id}
+                            onClick={() => setSelectedClass(c)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                              selectedClass?.id === c.id
+                                ? 'bg-primary-600 text-white border-primary-600'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'
+                            }`}
+                          >
+                            {c.grades?.name} — {c.name}
+                            {c.isClassTeacher && <span className="ml-1 opacity-60 text-[10px]">(CT)</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : selectedClass ? (
+                    <div className="flex items-center gap-2 mb-6 px-3 py-2 bg-primary-50 rounded-xl border border-primary-100 w-fit">
+                      <span className="text-xs font-bold text-primary-700">Viewing: {selectedClass.grades?.name} — {selectedClass.name}</span>
+                      {selectedClass.isClassTeacher && <span className="text-[10px] bg-primary-200 text-primary-800 px-2 py-0.5 rounded-full font-bold">Class Teacher</span>}
+                    </div>
+                  ) : null}
+
                   {resultsView === 'schedule' ? (
                     <div className="space-y-6">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -1620,7 +1648,11 @@ export default function TeacherDashboard() {
                           </thead>
                           <tbody className="divide-y divide-slate-50">
                             {students.sort((a, b) => a.first_name.localeCompare(b.first_name)).map(student => {
-                              const studentResults = results.filter(r => r.student_id === student.id && r.term === resultsSelectedTerm && r.year === resultsSelectedYear);
+                              const studentResults = results.filter(r =>
+                                r.student_id === student.id &&
+                                r.term === resultsSelectedTerm &&
+                                String(r.year) === resultsSelectedYear
+                              );
                               let total = 0;
                               let count = 0;
                               let failed = false;
