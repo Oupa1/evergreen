@@ -17,6 +17,7 @@ import {
   Download,
   Lightbulb,
   ChevronRight,
+  ChevronLeft,
   TrendingUp,
   Users,
   Trophy,
@@ -26,7 +27,8 @@ import {
   CheckCircle,
   Lock,
   Menu,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Sparkles
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Student, Result, Subject } from '../types';
@@ -53,7 +55,98 @@ const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: n
   return PASS_MARKS[name] || defaultPassMark || 40;
 };
 
-type Tab = 'overview' | 'results' | 'timetable' | 'tasks' | 'materials' | 'sports';
+type Tab = 'overview' | 'results' | 'timetable' | 'tasks' | 'materials' | 'lessons';
+
+// ── LESSON DATA ──────────────────────────────────────────────────
+const ALPHABET_CARDS = [
+  { key: 'A', word: 'Apple',     emoji: '🍎', colour: 'from-red-400 to-rose-500' },
+  { key: 'B', word: 'Ball',      emoji: '⚽', colour: 'from-blue-400 to-blue-600' },
+  { key: 'C', word: 'Cat',       emoji: '🐱', colour: 'from-orange-400 to-amber-500' },
+  { key: 'D', word: 'Dog',       emoji: '🐶', colour: 'from-yellow-400 to-orange-400' },
+  { key: 'E', word: 'Elephant',  emoji: '🐘', colour: 'from-slate-400 to-slate-600' },
+  { key: 'F', word: 'Fish',      emoji: '🐟', colour: 'from-cyan-400 to-blue-500' },
+  { key: 'G', word: 'Grapes',    emoji: '🍇', colour: 'from-purple-400 to-violet-600' },
+  { key: 'H', word: 'Hat',       emoji: '🎩', colour: 'from-indigo-400 to-indigo-600' },
+  { key: 'I', word: 'Ice Cream', emoji: '🍦', colour: 'from-pink-300 to-pink-500' },
+  { key: 'J', word: 'Jaguar',    emoji: '🐆', colour: 'from-yellow-500 to-amber-600' },
+  { key: 'K', word: 'Kite',      emoji: '🪁', colour: 'from-sky-400 to-cyan-500' },
+  { key: 'L', word: 'Lion',      emoji: '🦁', colour: 'from-amber-400 to-orange-500' },
+  { key: 'M', word: 'Monkey',    emoji: '🐒', colour: 'from-orange-400 to-red-400' },
+  { key: 'N', word: 'Nest',      emoji: '🪺', colour: 'from-lime-500 to-green-600' },
+  { key: 'O', word: 'Orange',    emoji: '🍊', colour: 'from-orange-400 to-amber-500' },
+  { key: 'P', word: 'Penguin',   emoji: '🐧', colour: 'from-slate-500 to-slate-700' },
+  { key: 'Q', word: 'Queen',     emoji: '👑', colour: 'from-yellow-400 to-yellow-600' },
+  { key: 'R', word: 'Rainbow',   emoji: '🌈', colour: 'from-red-400 via-yellow-400 to-blue-500' },
+  { key: 'S', word: 'Sun',       emoji: '☀️', colour: 'from-yellow-300 to-orange-400' },
+  { key: 'T', word: 'Turtle',    emoji: '🐢', colour: 'from-green-400 to-emerald-600' },
+  { key: 'U', word: 'Umbrella',  emoji: '☂️', colour: 'from-blue-400 to-indigo-500' },
+  { key: 'V', word: 'Violin',    emoji: '🎻', colour: 'from-amber-600 to-yellow-700' },
+  { key: 'W', word: 'Whale',     emoji: '🐳', colour: 'from-blue-500 to-cyan-600' },
+  { key: 'X', word: 'X-ray',     emoji: '🦴', colour: 'from-slate-300 to-slate-500' },
+  { key: 'Y', word: 'Yak',       emoji: '🐂', colour: 'from-stone-400 to-stone-600' },
+  { key: 'Z', word: 'Zebra',     emoji: '🦓', colour: 'from-gray-400 to-gray-700' },
+];
+
+const NUMBER_CARDS = [
+  { key: '1',  word: 'One',   emoji: '🍎', dotEmoji: '🍎' },
+  { key: '2',  word: 'Two',   emoji: '🐦', dotEmoji: '🐦' },
+  { key: '3',  word: 'Three', emoji: '⭐', dotEmoji: '⭐' },
+  { key: '4',  word: 'Four',  emoji: '🌸', dotEmoji: '🌸' },
+  { key: '5',  word: 'Five',  emoji: '🐟', dotEmoji: '🐟' },
+  { key: '6',  word: 'Six',   emoji: '🍬', dotEmoji: '🍬' },
+  { key: '7',  word: 'Seven', emoji: '🌙', dotEmoji: '🌙' },
+  { key: '8',  word: 'Eight', emoji: '🐝', dotEmoji: '🐝' },
+  { key: '9',  word: 'Nine',  emoji: '🎈', dotEmoji: '🎈' },
+  { key: '10', word: 'Ten',   emoji: '🌻', dotEmoji: '🌻' },
+];
+
+const ANIMAL_CARDS = [
+  { name: 'Lion',      emoji: '🦁', sound: 'Roar!',     habitat: 'Savanna' },
+  { name: 'Elephant',  emoji: '🐘', sound: 'Trumpet!',  habitat: 'Africa & Asia' },
+  { name: 'Giraffe',   emoji: '🦒', sound: 'Hmm!',      habitat: 'Savanna' },
+  { name: 'Monkey',    emoji: '🐒', sound: 'Ooh ooh!',  habitat: 'Jungle' },
+  { name: 'Tiger',     emoji: '🐯', sound: 'Roar!',     habitat: 'Asia' },
+  { name: 'Zebra',     emoji: '🦓', sound: 'Bark!',     habitat: 'Africa' },
+  { name: 'Penguin',   emoji: '🐧', sound: 'Squawk!',   habitat: 'Antarctica' },
+  { name: 'Dog',       emoji: '🐶', sound: 'Woof!',     habitat: 'Home' },
+  { name: 'Cat',       emoji: '🐱', sound: 'Meow!',     habitat: 'Home' },
+  { name: 'Duck',      emoji: '🦆', sound: 'Quack!',    habitat: 'Farm & Pond' },
+  { name: 'Cow',       emoji: '🐄', sound: 'Moo!',      habitat: 'Farm' },
+  { name: 'Pig',       emoji: '🐷', sound: 'Oink!',     habitat: 'Farm' },
+  { name: 'Frog',      emoji: '🐸', sound: 'Ribbit!',   habitat: 'Pond' },
+  { name: 'Butterfly', emoji: '🦋', sound: 'Flutter!',  habitat: 'Garden' },
+  { name: 'Dolphin',   emoji: '🐬', sound: 'Click!',    habitat: 'Ocean' },
+];
+
+const LESSONS_META = [
+  {
+    id: 'alphabet',
+    title: 'The Alphabet',
+    subtitle: 'Learn all 26 letters · A to Z',
+    emoji: '🔤',
+    gradient: 'from-violet-500 via-purple-500 to-fuchsia-500',
+    count: 26,
+    data: ALPHABET_CARDS as any[],
+  },
+  {
+    id: 'numbers',
+    title: 'Numbers 1 – 10',
+    subtitle: 'Count and recognise numbers',
+    emoji: '🔢',
+    gradient: 'from-sky-500 via-cyan-500 to-teal-500',
+    count: 10,
+    data: NUMBER_CARDS as any[],
+  },
+  {
+    id: 'animals',
+    title: 'Amazing Animals',
+    subtitle: 'Meet 15 incredible animals',
+    emoji: '🦁',
+    gradient: 'from-amber-500 via-orange-500 to-red-500',
+    count: 15,
+    data: ANIMAL_CARDS as any[],
+  },
+];
 
 const PuzzlePlayer = ({ image, onComplete }: { image: string, onComplete: () => void }) => {
   const [pieces, setPieces] = useState<number[]>([]);
@@ -301,6 +394,8 @@ export default function StudentDashboard() {
   const [materials, setMaterials] = useState<any[]>([]);
   const [resultPublications, setResultPublications] = useState<any[]>([]);
   const [sportEvents, setSportEvents] = useState<any[]>([]);
+  const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
+  const [activeCardIndex, setActiveCardIndex] = useState(0);
   const [selectedTask, setSelectedTask] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -589,6 +684,7 @@ export default function StudentDashboard() {
           {[
             { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
             { id: 'results', icon: Award, label: 'My Results' },
+            { id: 'lessons', icon: Sparkles, label: 'Fun Lessons' },
             { id: 'timetable', icon: Calendar, label: 'Timetable' },
             { id: 'tasks', icon: FileText, label: 'Tasks & Quizzes' },
             { id: 'materials', icon: Download, label: 'Learning Materials' },
@@ -1102,6 +1198,170 @@ export default function StudentDashboard() {
               )}
             </motion.div>
           )}
+
+          {activeTab === 'lessons' && (() => {
+            const lesson = LESSONS_META.find(l => l.id === activeLessonId);
+            const card   = lesson ? lesson.data[activeCardIndex] : null;
+            const total  = lesson ? lesson.data.length : 0;
+            return (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 p-2">
+                {/* ── LESSON PICKER ── */}
+                {!activeLessonId ? (
+                  <>
+                    <div className="text-center py-4">
+                      <div className="inline-flex items-center gap-2 bg-white border border-slate-200 rounded-full px-5 py-2 shadow-sm mb-3">
+                        <Sparkles className="w-4 h-4 text-primary-500" />
+                        <span className="text-sm font-bold text-slate-700">Fun Lessons — Grades R to 3</span>
+                      </div>
+                      <h2 className="text-3xl font-bold text-slate-900">Choose a Lesson</h2>
+                      <p className="text-slate-500 mt-1">Tap a lesson to start learning!</p>
+                    </div>
+                    <div className="grid gap-5 sm:grid-cols-3">
+                      {LESSONS_META.map((l, i) => (
+                        <motion.button
+                          key={l.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.1 }}
+                          onClick={() => { setActiveLessonId(l.id); setActiveCardIndex(0); }}
+                          className={`bg-gradient-to-br ${l.gradient} text-white rounded-[2rem] p-8 flex flex-col items-center gap-4 shadow-xl hover:scale-[1.03] active:scale-[0.97] transition-transform text-left`}
+                        >
+                          <span className="text-7xl leading-none">{l.emoji}</span>
+                          <div className="text-center">
+                            <h3 className="text-2xl font-bold">{l.title}</h3>
+                            <p className="text-white/80 text-sm mt-1">{l.subtitle}</p>
+                          </div>
+                          <div className="mt-2 bg-white/20 rounded-full px-4 py-1.5 text-sm font-bold">
+                            {l.count} cards · Tap to start →
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  /* ── ACTIVE LESSON ── */
+                  <>
+                    {/* Header */}
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setActiveLessonId(null)}
+                        className="flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-primary-600 transition-colors"
+                      >
+                        <ChevronLeft className="w-5 h-5" /> Back to Lessons
+                      </button>
+                      <span className="ml-auto text-sm font-bold text-slate-400">
+                        {activeCardIndex + 1} / {total}
+                      </span>
+                    </div>
+
+                    {/* Big Feature Card */}
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={`${activeLessonId}-${activeCardIndex}`}
+                        initial={{ opacity: 0, scale: 0.92 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.92 }}
+                        transition={{ duration: 0.2 }}
+                        className={`bg-gradient-to-br ${
+                          activeLessonId === 'alphabet'
+                            ? card?.colour
+                            : activeLessonId === 'numbers'
+                            ? 'from-sky-500 via-cyan-500 to-teal-500'
+                            : 'from-amber-500 via-orange-500 to-red-500'
+                        } rounded-[2.5rem] p-8 text-white text-center shadow-2xl`}
+                      >
+                        {activeLessonId === 'alphabet' && card && (
+                          <>
+                            <div className="text-[6rem] leading-none mb-2">{card.emoji}</div>
+                            <div className="text-8xl font-black tracking-tight mb-1">{card.key}</div>
+                            <div className="text-2xl font-bold text-white/90">
+                              {card.key} is for <span className="text-white">{card.word}</span>
+                            </div>
+                          </>
+                        )}
+                        {activeLessonId === 'numbers' && card && (
+                          <>
+                            <div className="text-8xl font-black tracking-tight mb-3">{card.key}</div>
+                            <div className="text-2xl font-bold mb-4">{card.word}</div>
+                            <div className="flex flex-wrap justify-center gap-2 max-w-xs mx-auto">
+                              {Array.from({ length: parseInt(card.key) }).map((_, i) => (
+                                <span key={i} className="text-4xl">{card.dotEmoji}</span>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {activeLessonId === 'animals' && card && (
+                          <>
+                            <div className="text-[6rem] leading-none mb-3">{card.emoji}</div>
+                            <div className="text-4xl font-black mb-2">{card.name}</div>
+                            <div className="inline-block bg-white/20 rounded-full px-5 py-1.5 text-xl font-bold mb-2">
+                              {card.sound}
+                            </div>
+                            <div className="text-sm text-white/75 mt-1">🌍 {card.habitat}</div>
+                          </>
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
+
+                    {/* Prev / Next Controls */}
+                    <div className="flex items-center justify-center gap-4">
+                      <button
+                        onClick={() => setActiveCardIndex(i => Math.max(0, i - 1))}
+                        disabled={activeCardIndex === 0}
+                        className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 hover:bg-primary-50 hover:border-primary-300 disabled:opacity-30 transition-all active:scale-95"
+                      >
+                        <ChevronLeft className="w-6 h-6" />
+                      </button>
+                      {/* Progress dots (max 10 visible) */}
+                      <div className="flex gap-1.5 flex-wrap justify-center max-w-[200px]">
+                        {lesson!.data.slice(0, Math.min(total, 26)).map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setActiveCardIndex(i)}
+                            className={`rounded-full transition-all ${
+                              i === activeCardIndex
+                                ? 'w-5 h-3 bg-primary-600'
+                                : 'w-3 h-3 bg-slate-200 hover:bg-slate-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setActiveCardIndex(i => Math.min(total - 1, i + 1))}
+                        disabled={activeCardIndex === total - 1}
+                        className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-700 hover:bg-primary-50 hover:border-primary-300 disabled:opacity-30 transition-all active:scale-95"
+                      >
+                        <ChevronRight className="w-6 h-6" />
+                      </button>
+                    </div>
+
+                    {/* Mini Thumbnail Grid */}
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">All Cards</p>
+                      <div className={`grid gap-2 ${activeLessonId === 'alphabet' ? 'grid-cols-6 sm:grid-cols-9' : activeLessonId === 'numbers' ? 'grid-cols-5 sm:grid-cols-10' : 'grid-cols-5'}`}>
+                        {lesson!.data.map((c: any, i: number) => (
+                          <button
+                            key={i}
+                            onClick={() => setActiveCardIndex(i)}
+                            className={`aspect-square rounded-2xl flex flex-col items-center justify-center gap-0.5 border-2 transition-all hover:scale-105 active:scale-95 ${
+                              i === activeCardIndex
+                                ? 'border-primary-500 bg-primary-50 shadow-md'
+                                : 'border-slate-100 bg-white hover:border-slate-300'
+                            }`}
+                          >
+                            <span className="text-lg leading-none">{c.emoji}</span>
+                            <span className={`text-[10px] font-black leading-none ${i === activeCardIndex ? 'text-primary-600' : 'text-slate-500'}`}>
+                              {activeLessonId === 'alphabet' ? c.key : activeLessonId === 'numbers' ? c.key : c.name.slice(0, 4)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            );
+          })()}
 
           {activeTab === 'timetable' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
