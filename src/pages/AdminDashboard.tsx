@@ -55,6 +55,7 @@ import { supabase } from '../lib/supabase';
 import { logAction } from '../lib/auditLog';
 import { Grade, Section, Subject, ClassSubject, Student, Result, Task } from '../types';
 import LearnerProfile from '../components/LearnerProfile';
+import { generateLearnerReport } from '../lib/gemini';
 import { 
   BarChart, 
   Bar, 
@@ -325,6 +326,8 @@ export default function AdminDashboard() {
   const [isFetchingBalance, setIsFetchingBalance] = useState(false);
   const [smsBalanceError, setSmsBalanceError] = useState<string | null>(null);
   const [selectedProfileStudent, setSelectedProfileStudent] = useState<any | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [isPrintingProfiles, setIsPrintingProfiles] = useState(false);
   // Noticeboard state
   const [notices, setNotices] = useState<any[]>([]);
   const [noticeTitle, setNoticeTitle] = useState('');
@@ -1721,6 +1724,214 @@ export default function AdminDashboard() {
       setTasks([data[0], ...tasks]);
       setNewTask({ ...newTask, name: '', description: '' });
       showMessage('success', 'Task added successfully');
+    }
+  };
+
+  // Learner selection helpers
+  const toggleStudentSelect = (id: string) => {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = (studentList: any[]) => {
+    const allIds = studentList.map(s => s.id);
+    const allSelected = allIds.every(id => selectedStudentIds.has(id));
+    if (allSelected) {
+      setSelectedStudentIds(prev => {
+        const next = new Set(prev);
+        allIds.forEach(id => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds(prev => {
+        const next = new Set(prev);
+        allIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const handlePrintSelectedProfiles = async (selectedStudents: any[]) => {
+    if (selectedStudents.length === 0) return;
+    setIsPrintingProfiles(true);
+
+    try {
+      // Fetch results for all selected students in parallel
+      const resultsPerStudent: Record<string, any[]> = {};
+      await Promise.all(
+        selectedStudents.map(async (s) => {
+          const { data } = await supabase
+            .from('results')
+            .select('*, subjects(*)')
+            .eq('student_id', s.id)
+            .eq('school_id', school_id);
+          resultsPerStudent[s.id] = data || [];
+        })
+      );
+
+      // For each student compute subject averages and generate AI report
+      const profiles: { student: any; subjectData: {name: string; score: number}[]; report: string }[] = [];
+      for (const s of selectedStudents) {
+        const sResults = resultsPerStudent[s.id] || [];
+        const subjectMap: Record<string, number[]> = {};
+        sResults.forEach((r: any) => {
+          const name = r.subjects?.name || 'Unknown';
+          if (!subjectMap[name]) subjectMap[name] = [];
+          subjectMap[name].push(Number(r.score));
+        });
+        const subjectData = Object.entries(subjectMap).map(([name, scores]) => ({
+          name,
+          score: scores.reduce((a, b) => a + b, 0) / scores.length,
+        }));
+
+        let report = 'No results available to generate report.';
+        if (subjectData.length > 0) {
+          report = await generateLearnerReport(`${s.first_name} ${s.last_name}`, subjectData);
+        }
+        profiles.push({ student: s, subjectData, report });
+      }
+
+      const getMarkColor = (score: number) => {
+        if (score >= 80) return '#d97706'; // amber
+        if (score >= 60) return '#059669'; // emerald
+        if (score >= 40) return '#2563eb'; // blue
+        return '#dc2626'; // red
+      };
+      const getLevelLabel = (score: number) => {
+        if (score >= 80) return 'Outstanding (Level 7)';
+        if (score >= 70) return 'Meritorious (Level 6)';
+        if (score >= 60) return 'Substantial (Level 5)';
+        if (score >= 50) return 'Adequate (Level 4)';
+        if (score >= 40) return 'Moderate (Level 3)';
+        if (score >= 30) return 'Elementary (Level 2)';
+        return 'Not Achieved (Level 1)';
+      };
+
+      const schoolName = schoolInfo?.name || 'School';
+
+      const profilePages = profiles.map(({ student: s, subjectData, report }) => {
+        const avg = subjectData.length > 0
+          ? subjectData.reduce((a, b) => a + b.score, 0) / subjectData.length
+          : 0;
+        const subjectRows = subjectData.map(sub => `
+          <tr>
+            <td>${sub.name}</td>
+            <td style="text-align:center;font-weight:bold;color:${getMarkColor(sub.score)}">${sub.score.toFixed(1)}%</td>
+            <td style="text-align:center;font-size:10px">${getLevelLabel(sub.score)}</td>
+            <td style="text-align:center;font-weight:bold;color:${sub.score >= 40 ? '#059669' : '#dc2626'}">${sub.score >= 40 ? 'Pass' : 'Fail'}</td>
+          </tr>`).join('');
+
+        return `
+          <div class="page">
+            <div class="header">
+              <div>
+                <div class="school-name">${schoolName}</div>
+                <div class="doc-title">Learner Academic Profile</div>
+              </div>
+              <div class="date">Date: ${new Date().toLocaleDateString()}</div>
+            </div>
+            <div class="hr"></div>
+
+            <div class="info-grid">
+              <div class="info-box">
+                <div class="info-label">Full Name</div>
+                <div class="info-value">${s.first_name} ${s.last_name}</div>
+              </div>
+              <div class="info-box">
+                <div class="info-label">Student ID</div>
+                <div class="info-value">${s.student_id || 'N/A'}</div>
+              </div>
+              <div class="info-box">
+                <div class="info-label">Grade / Class</div>
+                <div class="info-value">${s.sections?.grades?.name || '-'} — ${s.sections?.name || '-'}</div>
+              </div>
+              <div class="info-box">
+                <div class="info-label">Gender</div>
+                <div class="info-value">${s.gender || 'N/A'}</div>
+              </div>
+              <div class="info-box">
+                <div class="info-label">Overall Average</div>
+                <div class="info-value" style="color:${getMarkColor(avg)}">${avg.toFixed(1)}%</div>
+              </div>
+              <div class="info-box">
+                <div class="info-label">Contact</div>
+                <div class="info-value">${s.phone || '—'}</div>
+              </div>
+            </div>
+
+            <h3 class="section-title">Academic Performance</h3>
+            ${subjectData.length > 0 ? `
+            <table>
+              <thead><tr><th>Subject</th><th>Average Mark</th><th>Level</th><th>Status</th></tr></thead>
+              <tbody>${subjectRows}</tbody>
+            </table>` : '<p style="color:#94a3b8;font-style:italic">No results recorded yet.</p>'}
+
+            <h3 class="section-title ai-title">AI Academic Insights &amp; Recommendations</h3>
+            <div class="ai-box">${report}</div>
+
+            <div class="footer-section">
+              <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">Teacher Signature</div>
+              </div>
+              <div class="sig-block">
+                <div class="sig-line"></div>
+                <div class="sig-label">Date</div>
+              </div>
+              <div class="stamp-box">OFFICIAL SCHOOL STAMP</div>
+            </div>
+
+            <div class="footer-text">${schoolName} — Academic Records — CONFIDENTIAL</div>
+          </div>`;
+      }).join('');
+
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+        <title>Learner Profiles — ${schoolName}</title>
+        <style>
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e293b;background:#fff}
+          .page{padding:28px 32px;page-break-after:always;max-width:780px;margin:0 auto}
+          .page:last-child{page-break-after:avoid}
+          .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
+          .school-name{font-size:20px;font-weight:900;color:#059669}
+          .doc-title{font-size:12px;color:#64748b;font-weight:600;margin-top:2px}
+          .date{font-size:10px;color:#94a3b8}
+          .hr{border:none;border-top:2px solid #059669;margin-bottom:14px}
+          .info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
+          .info-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px}
+          .info-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:3px}
+          .info-value{font-size:13px;font-weight:700;color:#1e293b}
+          .section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#059669;margin:16px 0 8px}
+          .ai-title{color:#7c3aed}
+          table{width:100%;border-collapse:collapse;margin-bottom:6px}
+          thead tr{background:#1e293b;color:#fff}
+          th{padding:7px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.05em}
+          td{padding:6px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+          tr:nth-child(even) td{background:#f8fafc}
+          .ai-box{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:12px 16px;font-size:11px;line-height:1.6;color:#4c1d95;font-style:italic}
+          .footer-section{display:flex;align-items:flex-end;gap:30px;margin-top:24px}
+          .sig-block{flex:1}
+          .sig-line{border-bottom:1px solid #cbd5e1;margin-bottom:5px;height:30px}
+          .sig-label{font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
+          .stamp-box{width:100px;height:55px;border:1.5px solid #059669;border-radius:8px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:7px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#059669;padding:6px}
+          .footer-text{margin-top:14px;font-size:8px;color:#94a3b8;text-align:center;border-top:1px solid #f1f5f9;padding-top:8px}
+        </style>
+      </head><body>${profilePages}</body></html>`;
+
+      const win = window.open('', '_blank');
+      if (!win) return;
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    } catch (err) {
+      console.error('Print profiles error:', err);
+      showMessage('error', 'Failed to generate profiles. Please try again.');
+    } finally {
+      setIsPrintingProfiles(false);
     }
   };
 
@@ -3307,6 +3518,21 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {selectedStudentIds.size > 0 && (
+                      <button
+                        onClick={() => {
+                          const selected = filteredStudents.filter(s => selectedStudentIds.has(s.id));
+                          handlePrintSelectedProfiles(selected);
+                        }}
+                        disabled={isPrintingProfiles}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 text-white rounded-xl font-bold text-sm hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-sm"
+                      >
+                        {isPrintingProfiles
+                          ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                          : <><Printer className="w-4 h-4" /> Print Profiles ({selectedStudentIds.size})</>
+                        }
+                      </button>
+                    )}
                     <button
                       onClick={generateLearnerTemplate}
                       className="flex items-center gap-2 px-4 py-2 text-primary-600 font-bold text-sm hover:bg-primary-50 rounded-xl transition-colors"
@@ -3383,6 +3609,16 @@ export default function AdminDashboard() {
                   <table className="w-full">
                     <thead>
                       <tr className="text-left border-b border-slate-100">
+                        <th className="pb-4 pl-2 pr-0 w-8">
+                          <input
+                            type="checkbox"
+                            checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.has(s.id))}
+                            ref={el => { if (el) el.indeterminate = filteredStudents.some(s => selectedStudentIds.has(s.id)) && !filteredStudents.every(s => selectedStudentIds.has(s.id)); }}
+                            onChange={() => toggleSelectAll(filteredStudents)}
+                            title="Mark All"
+                            className="w-4 h-4 rounded border-slate-300 cursor-pointer accent-violet-600"
+                          />
+                        </th>
                         <th className="pb-4 font-bold text-slate-400 text-xs uppercase tracking-wider">
                           <button onClick={() => handleSort('first_name')} className="flex items-center gap-1 hover:text-slate-600">
                             Name <ArrowUpDown className="w-3 h-3" />
@@ -3406,7 +3642,15 @@ export default function AdminDashboard() {
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {filteredStudents.map((s) => (
-                        <tr key={s.id} className="group hover:bg-slate-50 transition-colors">
+                        <tr key={s.id} className={`group hover:bg-slate-50 transition-colors ${selectedStudentIds.has(s.id) ? 'bg-violet-50/60' : ''}`}>
+                          <td className="py-4 pl-2 pr-0 w-8">
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(s.id)}
+                              onChange={() => toggleStudentSelect(s.id)}
+                              className="w-4 h-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500 cursor-pointer accent-violet-600"
+                            />
+                          </td>
                           <td className="py-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 bg-slate-100 text-slate-600 rounded-lg flex items-center justify-center font-bold text-xs">
