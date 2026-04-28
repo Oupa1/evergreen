@@ -258,7 +258,12 @@ export default function TeacherDashboard() {
         }
       });
 
-      const classesList = Array.from(uniqueClasses.values());
+      const classesList = Array.from(uniqueClasses.values())
+        .sort((a: any, b: any) => {
+          const gradeA = a.grades?.name || '';
+          const gradeB = b.grades?.name || '';
+          return gradeA.localeCompare(gradeB) || a.name.localeCompare(b.name);
+        });
       setAssignedClasses(classesList);
       
       if (classesList.length > 0) {
@@ -533,7 +538,9 @@ export default function TeacherDashboard() {
       const { data: studentsData } = await supabase
         .from('students')
         .select('*')
-        .eq('section_id', selectedClass.id);
+        .eq('section_id', selectedClass.id)
+        .order('last_name')
+        .order('first_name');
       setStudents(studentsData || []);
 
       // Fetch subjects for this class
@@ -541,7 +548,10 @@ export default function TeacherDashboard() {
         .from('class_subjects')
         .select('*, subjects(*)')
         .eq('section_id', selectedClass.id);
-      setSubjects(classSubjectsData?.map(cs => cs.subjects) || []);
+      setSubjects(
+        (classSubjectsData?.map(cs => cs.subjects) || [])
+          .sort((a: any, b: any) => a.name.localeCompare(b.name))
+      );
 
       // Fetch results
       const { data: resultsData } = await supabase

@@ -1440,7 +1440,7 @@ export default function AdminDashboard() {
     const { data, error } = await supabase.from('grades').insert([{ name: newGrade, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
-      setGrades([...grades, data[0]]);
+      setGrades([...grades, data[0]].sort((a, b) => a.name.localeCompare(b.name)));
       setNewGrade('');
       showMessage('success', 'Grade added successfully');
     }
@@ -1510,7 +1510,7 @@ export default function AdminDashboard() {
     const { data, error } = await supabase.from('subjects').insert([{ name: newSubject.name, code: newSubject.code, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
-      setSubjects([...subjects, data[0]]);
+      setSubjects([...subjects, data[0]].sort((a, b) => a.name.localeCompare(b.name)));
       setNewSubject({ name: '', code: '', pass_mark: 50 });
       showMessage('success', 'Subject added successfully');
     }
@@ -1562,7 +1562,7 @@ export default function AdminDashboard() {
     const { data, error } = await supabase.from('teachers').insert([{ ...newTeacher, school_id }]).select();
     if (error) showMessage('error', error.message);
     else {
-      setTeachers([...teachers, data[0]]);
+      setTeachers([...teachers, data[0]].sort((a, b) => a.first_name.localeCompare(b.first_name) || a.last_name.localeCompare(b.last_name)));
       logAction('teacher.add', { name: `${newTeacher.first_name} ${newTeacher.last_name}`, email: newTeacher.email });
       setNewTeacher({ first_name: '', last_name: '', email: '', phone: '', password: 'teacher123' });
       showMessage('success', 'Teacher added successfully');
