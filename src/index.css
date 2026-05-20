@@ -47,5 +47,13 @@
     .print\:overflow-visible {
       overflow: visible !important;
     }
+    .certificate-page {
+      page-break-after: always;
+      break-after: page;
+    }
+    @page {
+      size: A4 landscape;
+      margin: 10mm;
+    }
   }
 }

@@ -1,14 +1,20 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-const apiKey = process.env.GEMINI_API_KEY;
-const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+async function callGemini(contents: any, config?: any): Promise<string> {
+  const res = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "gemini-2.5-flash", contents, config }),
+  });
+  const data = await res.json() as { text?: string; error?: string; retryAfter?: number };
+  if (!res.ok || data.error) {
+    const err: any = new Error(data.error || "Gemini API error.");
+    err.retryAfter = data.retryAfter;
+    err.status = res.status;
+    throw err;
+  }
+  return data.text || "";
+}
 
 export async function generateLearnerReport(studentName: string, subjects: any[]) {
-  if (!apiKey) {
-    return "AI report generation is currently unavailable. Please configure the Gemini API key.";
-  }
-
-  const model = "gemini-3-flash-preview";
   const prompt = `
     Generate a short, professional academic report for a student named ${studentName}.
     Based on the following subject performance (marks are percentages):
@@ -24,11 +30,7 @@ export async function generateLearnerReport(studentName: string, subjects: any[]
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-    });
-    return response.text || "Report generation failed.";
+    return await callGemini(prompt);
   } catch (error) {
     console.error("Gemini Error:", error);
     return "Failed to generate AI report.";
@@ -43,11 +45,6 @@ export async function generateCAPSLessonPlan(
   duration: number,
   topic?: string
 ) {
-  if (!apiKey) {
-    throw new Error("AI lesson plan generation is currently unavailable. Please configure the Gemini API key.");
-  }
-
-  const model = "gemini-3-flash-preview";
   const topicInstruction = topic
     ? `The teacher wants to focus on this topic/concept: "${topic}". Use this as the primary CAPS-aligned topic.`
     : `Automatically determine the appropriate CAPS topic and sub-topic for ${subject} Grade ${grade} ${term} Week ${week}.`;
@@ -116,11 +113,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 }`;
 
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-    });
-    const text = response.text || '';
+    const text = await callGemini(prompt);
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(cleaned);
   } catch (error) {
@@ -136,11 +129,6 @@ export async function generateCAPSTermPlan(
   totalWeeks: number,
   topic?: string
 ) {
-  if (!apiKey) {
-    throw new Error("AI lesson plan generation is currently unavailable. Please configure the Gemini API key.");
-  }
-
-  const model = "gemini-3-flash-preview";
   const topicInstruction = topic
     ? `The teacher wants the term to focus on: "${topic}". Build a coherent week-by-week progression around this focus.`
     : `Use the official CAPS curriculum sequence for ${subject} ${grade} ${term}.`;
@@ -184,11 +172,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 Generate a weeklyPlan entry for EVERY week from 1 to ${totalWeeks}. Ensure topics follow the official CAPS sequence and build progressively across the term.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-    });
-    const text = response.text || '';
+    const text = await callGemini(prompt);
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(cleaned);
   } catch (error) {
@@ -198,13 +182,8 @@ Generate a weeklyPlan entry for EVERY week from 1 to ${totalWeeks}. Ensure topic
 }
 
 export async function generateQuizFromImage(base64Image: string, mimeType: string) {
-  if (!apiKey) {
-    throw new Error("AI quiz generation is currently unavailable. Please configure the Gemini API key.");
-  }
-
-  const model = "gemini-3-flash-preview";
   const prompt = `
-    Analyze the uploaded image (which could be a textbook page, a handwritten note, or a worksheet) and generate a structured quiz or puzzle based on its content.
+    Analyse the uploaded image (which could be a textbook page, a handwritten note, or a worksheet) and generate a structured quiz or puzzle based on its content.
     
     The output must be a JSON object with the following structure:
     {
@@ -224,25 +203,20 @@ export async function generateQuizFromImage(base64Image: string, mimeType: strin
     Return ONLY the JSON object.
   `;
 
+  const contents = [
+    {
+      inlineData: {
+        data: base64Image.split(',')[1] || base64Image,
+        mimeType,
+      },
+    },
+    { text: prompt },
+  ];
+
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [
-        {
-          inlineData: {
-            data: base64Image.split(',')[1] || base64Image,
-            mimeType: mimeType
-          }
-        },
-        { text: prompt }
-      ],
-      config: {
-        responseMimeType: "application/json"
-      }
-    });
-    
-    if (!response.text) throw new Error("No response from AI");
-    return JSON.parse(response.text);
+    const text = await callGemini(contents, { responseMimeType: "application/json" });
+    if (!text) throw new Error("No response from AI");
+    return JSON.parse(text);
   } catch (error) {
     console.error("Gemini Error:", error);
     throw new Error("Failed to generate quiz from image.");

@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import fetch from "node-fetch";
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,41 @@ async function startServer() {
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5000;
 
   app.use(express.json());
+
+  // Gemini AI Proxy Route
+  app.post("/api/gemini", async (req, res) => {
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      return res.status(500).json({ error: "Gemini API key not configured." });
+    }
+
+    const { model = "gemini-2.0-flash", contents, config } = req.body;
+    if (!contents) {
+      return res.status(400).json({ error: "Missing contents." });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const response = await ai.models.generateContent({ model, contents, config });
+      res.json({ text: response.text || "" });
+    } catch (error: any) {
+      console.error("Gemini Proxy Error:", error);
+      const status = error.status || 500;
+      // Extract retry delay from 429 quota errors
+      let retryAfter: number | undefined;
+      try {
+        const body = JSON.parse(error.message);
+        const retryInfo = body?.error?.details?.find((d: any) => d["@type"]?.includes("RetryInfo"));
+        if (retryInfo?.retryDelay) {
+          retryAfter = parseInt(retryInfo.retryDelay);
+        }
+      } catch {}
+      const friendly = status === 429
+        ? `Gemini quota exceeded. Please retry in ${retryAfter ? `${retryAfter} seconds` : "a moment"}.`
+        : error.message || "Gemini API error.";
+      res.status(status).json({ error: friendly, retryAfter });
+    }
+  });
 
   // SMS Proxy Route
   app.post("/api/send-sms", async (req, res) => {

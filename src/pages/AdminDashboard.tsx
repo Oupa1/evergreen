@@ -48,14 +48,18 @@ import {
   Globe,
   History,
   CheckCheck,
-  XCircle
+  XCircle,
+  TrendingDown,
+  ShieldAlert,
+  ShieldCheck as ShieldCheckIcon,
+  ChevronUp
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { logAction } from '../lib/auditLog';
 import { Grade, Section, Subject, ClassSubject, Student, Result, Task } from '../types';
 import LearnerProfile from '../components/LearnerProfile';
-import { generateLearnerReport } from '../lib/gemini';
+import { buildLocalReport } from '../lib/reportEngine';
 import { 
   BarChart, 
   Bar, 
@@ -74,14 +78,16 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useTheme } from '../components/ThemeProvider';
 
-type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'noticeboard' | 'applications' | 'meetings' | 'sports-day';
+type Tab = 'overview' | 'grades' | 'subjects' | 'assign' | 'learners' | 'results' | 'results-schedule' | 'teachers' | 'tasks' | 'sms' | 'sms-config' | 'system-settings' | 'general-config' | 'timetable-allocation' | 'timetable-generate' | 'timetable-view' | 'school-info' | 'stats' | 'learner-list' | 'subject-ranking' | 'learner-reports' | 'certificates' | 'noticeboard' | 'applications' | 'meetings' | 'sports-day' | 'underperformance' | 'results-summary';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
-  'maths': 40,
+  'maths': 50,
+  'mathematics': 50,
   'life skills': 40,
+  'life skill': 40,
   'xitsonga': 50,
   'nst': 40,
   'social science': 40,
@@ -96,7 +102,74 @@ const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: n
   if (!subjectName) return defaultPassMark || 40;
   const name = subjectName.toLowerCase();
   if (name.includes('xitsonga')) return 50;
+  if (name.includes('math')) return 50;
   return PASS_MARKS[name] || defaultPassMark || 40;
+};
+
+const getCAPSPhase = (gradeName: string): 'R' | 'foundation' | 'intermediate' | 'senior' | null => {
+  const n = gradeName.toLowerCase().trim().replace('grade', '').trim();
+  if (n === 'r') return 'R';
+  const num = parseInt(n);
+  if (isNaN(num)) return null;
+  if (num >= 1 && num <= 3) return 'foundation';
+  if (num >= 4 && num <= 6) return 'intermediate';
+  if (num === 7) return 'senior';
+  return null;
+};
+
+const assessCAPSPromotion = (gradeName: string, subjectAverages: { name: string; score: number }[]) => {
+  const phase = getCAPSPhase(gradeName);
+  if (!phase) return { promoted: null as boolean | null, requirements: [] as { label: string; met: boolean; detail: string }[], phase: null as string | null };
+  const find = (kw: string) => subjectAverages.find(s => s.name.toLowerCase().includes(kw));
+  const xitsonga = find('xitsonga');
+  const english = find('english');
+  const maths = find('math');
+  const lifeSkills = find('life skill');
+  type Req = { label: string; met: boolean; detail: string };
+  const requirements: Req[] = [];
+  if (phase === 'R') {
+    const rxs = xitsonga ? xitsonga.score >= 40 : false;
+    const rm  = maths     ? maths.score     >= 40 : false;
+    const rls = lifeSkills? lifeSkills.score >= 40 : false;
+    requirements.push({ label: 'Home Language (Xitsonga)', met: rxs, detail: xitsonga ? `${xitsonga.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'Mathematics',               met: rm,  detail: maths     ? `${maths.score.toFixed(1)}%`     : 'No result' });
+    requirements.push({ label: 'Life Skills',               met: rls, detail: lifeSkills? `${lifeSkills.score.toFixed(1)}%`: 'No result' });
+    return { promoted: rxs && rm && rls, requirements, phase };
+  }
+  if (phase === 'foundation') {
+    const rxs = xitsonga ? xitsonga.score >= 50 : false;
+    const ren = english  ? english.score  >= 40 : false;
+    requirements.push({ label: 'Home Language — Xitsonga (Level 4, min 50%)', met: rxs, detail: xitsonga ? `${xitsonga.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'First Additional Language — English (Level 3, min 40%)', met: ren, detail: english ? `${english.score.toFixed(1)}%` : 'No result' });
+    return { promoted: rxs && ren, requirements, phase };
+  }
+  if (phase === 'intermediate') {
+    const rxs = xitsonga ? xitsonga.score >= 50 : false;
+    const ren = english  ? english.score  >= 40 : false;
+    const rm  = maths    ? maths.score    >= 40 : false;
+    const remaining = subjectAverages.filter(s => { const n = s.name.toLowerCase(); return !n.includes('xitsonga') && !n.includes('english') && !n.includes('math'); });
+    const passingOther = remaining.filter(s => s.score >= 40);
+    const roth = passingOther.length >= 2;
+    requirements.push({ label: 'Home Language — Xitsonga (Level 4, min 50%)', met: rxs, detail: xitsonga ? `${xitsonga.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'First Additional Language — English (Level 3, min 40%)', met: ren, detail: english ? `${english.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'Mathematics (Level 3, min 40%)', met: rm, detail: maths ? `${maths.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: `Any 2 remaining approved subjects (Level 3, min 40%) — ${passingOther.length} of ${remaining.length} passed`, met: roth, detail: passingOther.map(s => s.name).join(', ') || 'None' });
+    return { promoted: rxs && ren && rm && roth, requirements, phase };
+  }
+  if (phase === 'senior') {
+    const rxs = xitsonga ? xitsonga.score >= 50 : false;
+    const ren = english  ? english.score  >= 40 : false;
+    const rm  = maths    ? maths.score    >= 40 : false;
+    const remaining = subjectAverages.filter(s => { const n = s.name.toLowerCase(); return !n.includes('xitsonga') && !n.includes('english') && !n.includes('math'); });
+    const passingOther = remaining.filter(s => s.score >= 40);
+    const roth = passingOther.length >= 3;
+    requirements.push({ label: 'Home Language — Xitsonga (Level 4, min 50%)', met: rxs, detail: xitsonga ? `${xitsonga.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'First Additional Language — English (Level 3, min 40%)', met: ren, detail: english ? `${english.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: 'Mathematics (Level 3, min 40%)', met: rm, detail: maths ? `${maths.score.toFixed(1)}%` : 'No result' });
+    requirements.push({ label: `Any 3 required subjects (Level 3, min 40%) — ${passingOther.length} of ${remaining.length} passed`, met: roth, detail: passingOther.map(s => s.name).join(', ') || 'None' });
+    return { promoted: rxs && ren && rm && roth, requirements, phase };
+  }
+  return { promoted: null as boolean | null, requirements: [] as { label: string; met: boolean; detail: string }[], phase: null as string | null };
 };
 
 export default function AdminDashboard() {
@@ -106,7 +179,7 @@ export default function AdminDashboard() {
   const school_id = (school_id_raw && school_id_raw !== 'undefined' && !isNaN(Number(school_id_raw))) ? Number(school_id_raw) : 1;
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(['learner-info']);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -159,6 +232,27 @@ export default function AdminDashboard() {
   const [srYear, setSrYear] = useState(new Date().getFullYear().toString());
   const [srResults, setSrResults] = useState<any[]>([]);
   const [srLoading, setSrLoading] = useState(false);
+  // Underperformance Report
+  const [upTerm, setUpTerm] = useState('Term 1');
+  const [upYear, setUpYear] = useState(new Date().getFullYear().toString());
+  const [upData, setUpData] = useState<any[]>([]);
+  const [upLoading, setUpLoading] = useState(false);
+  const [upDebug, setUpDebug] = useState<{ resultRows: number; studentRows: number; matchedRows: number; gradesFound: string[] } | null>(null);
+  const [upAvailableYears, setUpAvailableYears] = useState<string[]>([]);
+  const [upAvailableTerms, setUpAvailableTerms] = useState<string[]>([]);
+  const [rsTerm, setRsTerm] = useState('Term 1');
+  const [rsYear, setRsYear] = useState(new Date().getFullYear().toString());
+  const [rsGrade, setRsGrade] = useState('');
+  const [rsData, setRsData] = useState<any[]>([]);
+  const [rsLoading, setRsLoading] = useState(false);
+  const [rsAvailableTerms, setRsAvailableTerms] = useState<string[]>([]);
+  const [rsAvailableYears, setRsAvailableYears] = useState<string[]>([]);
+  const [arGrade, setArGrade] = useState('');
+  const [arSubject, setArSubject] = useState('');
+  const [arRiskFilter, setArRiskFilter] = useState<'all' | 'high' | 'medium' | 'watch'>('all');
+  const [arData, setArData] = useState<any[]>([]);
+  const [arLoading, setArLoading] = useState(false);
+  const [arExpanded, setArExpanded] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -347,12 +441,28 @@ export default function AdminDashboard() {
   const [sportForm, setSportForm] = useState({ name: '', image_url: '', date: '', description: '' });
   const [sportEditId, setSportEditId] = useState<string | null>(null);
   const [savingSport, setSavingSport] = useState(false);
+  // Learner Reports state
+  const [lrMode, setLrMode] = useState<'individual' | 'class'>('class');
+  const [lrGrade, setLrGrade] = useState('');
+  const [lrSection, setLrSection] = useState('');
+  const [lrStudent, setLrStudent] = useState('');
+  const [lrTerm, setLrTerm] = useState('Term 1');
+  const [lrYear, setLrYear] = useState(new Date().getFullYear().toString());
+  const [lrLoading, setLrLoading] = useState(false);
   // SMS History state
   const [smsHistory, setSmsHistory] = useState<any[]>([]);
   // Applications state
   const [applications, setApplications] = useState<any[]>([]);
   const [appStatusFilter, setAppStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('all');
   const [processingAppId, setProcessingAppId] = useState<string | null>(null);
+  // Certificates state
+  const [certType, setCertType] = useState<'class' | 'grade' | 'subject'>('class');
+  const [certTerm, setCertTerm] = useState('Term 1');
+  const [certYear, setCertYear] = useState(new Date().getFullYear().toString());
+  const [certGrade, setCertGrade] = useState('');
+  const [certSubject, setCertSubject] = useState('');
+  const [certData, setCertData] = useState<any[]>([]);
+  const [certLoading, setCertLoading] = useState(false);
   const lastSMSFetchTime = useRef<number>(0);
   const lastFailedSMSConfig = useRef<string>('');
 
@@ -483,6 +593,7 @@ export default function AdminDashboard() {
     knockOffTime: string;
     breaks: { name: string; startTime: string; duration: number }[];
     dayRules: { id: string; day: string; period: string; label: string; color: string; noTeacher: boolean; gradeFilter?: string }[];
+    daySchedules?: { [day: string]: { startTime?: string; knockOffTime?: string; breaks?: { name: string; startTime: string; duration: number }[] } };
     [key: string]: any;
   }>({
     startTime: '08:00',
@@ -498,11 +609,14 @@ export default function AdminDashboard() {
       { id: 'r3', day: 'Wednesday', period: 'second-to-last', label: 'Life Skills', color: 'blue', noTeacher: false },
       { id: 'r4', day: 'Wednesday', period: 'second-to-last', label: 'Life Orientation', color: 'indigo', noTeacher: false, gradeFilter: 'Grade 7' },
     ],
+    daySchedules: {},
   });
   const [showBreakForm, setShowBreakForm] = useState(false);
   const [newBreakForm, setNewBreakForm] = useState({ name: '', startTime: '', duration: '' });
   const [showDayRuleForm, setShowDayRuleForm] = useState(false);
   const [newDayRule, setNewDayRule] = useState({ day: 'Monday', period: '1', label: '', color: 'slate', noTeacher: true, gradeFilter: '' });
+  const [editingDaySchedule, setEditingDaySchedule] = useState<string | null>(null);
+  const [newDayBreakForm, setNewDayBreakForm] = useState<{ [day: string]: { name: string; startTime: string; duration: string } }>({});
   const [ttViewMode, setTtViewMode] = useState<'grid' | 'dayview'>('grid');
 
   const getGradePhase = (gradeName: string) => {
@@ -528,6 +642,23 @@ export default function AdminDashboard() {
   useEffect(() => {
     fetchInitialData();
   }, []);
+
+  useEffect(() => {
+    const tabToCategory: Record<string, string> = {
+      learners: 'learner-info', results: 'learner-info', 'results-schedule': 'learner-info',
+      stats: 'learner-info', 'learner-list': 'learner-info', 'subject-ranking': 'learner-info',
+      'learner-reports': 'learner-info', certificates: 'learner-info', underperformance: 'learner-info', 'results-summary': 'learner-info', 'at-risk': 'learner-info',
+      subjects: 'curriculum', assign: 'curriculum', grades: 'curriculum',
+      sms: 'communication', 'sms-config': 'communication', noticeboard: 'communication',
+      meetings: 'communication', 'sports-day': 'communication',
+      applications: 'admissions-mgmt',
+      'timetable-allocation': 'timetable', 'timetable-generate': 'timetable', 'timetable-view': 'timetable',
+      teachers: 'manage-users',
+      'school-info': 'settings', 'system-settings': 'settings', 'general-config': 'settings',
+    };
+    const cat = tabToCategory[activeTab];
+    if (cat) setExpandedCategories(prev => prev.includes(cat) ? prev : [...prev, cat]);
+  }, [activeTab]);
 
   useEffect(() => {
     let interval: any;
@@ -672,6 +803,576 @@ export default function AdminDashboard() {
       fetchSubjectRanking();
     }
   }, [activeTab, srSubject, srTerm, srYear]);
+
+  // ── Underperformance Report ──────────────────────────────────────────
+  // CAPS Level 4+ = score >= 50%
+  // Proxy subjects: Grade R-3 → Xitsonga + Maths; Grade 4-7 → English + Maths
+  // School conclusion: Grade 6 verdict
+  const UNDERPERF_GRADES = ['Grade R', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
+  const LOWER_GRADES = new Set(['grade r', 'grade 1', 'grade 2', 'grade 3']);
+
+  const fetchUpAvailableOptions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('results')
+        .select('term, year')
+        .eq('school_id', school_id);
+      if (error || !data) return;
+      const years = [...new Set(data.map((r: any) => String(r.year)))].sort((a, b) => Number(b) - Number(a));
+      const terms = [...new Set(data.map((r: any) => r.term as string))].sort();
+      setUpAvailableYears(years);
+      setUpAvailableTerms(terms);
+      const selectedYear = years.length > 0 ? years[0] : upYear;
+      const selectedTerm = terms.length > 0 ? terms[0] : upTerm;
+      setUpYear(selectedYear);
+      setUpTerm(selectedTerm);
+      await fetchUnderperformanceData(selectedTerm, selectedYear);
+    } catch { /* silent */ }
+  };
+
+  // Simple average-based underperformance fetch:
+  // For each grade, compute avg score for the proxy language subject and Maths.
+  // Status: avg lang ≥ 50 AND avg maths ≥ 50 → Performing, otherwise Underperforming.
+  // School verdict = Grade 6 result.
+  const fetchUnderperformanceData = async (termOverride?: string, yearOverride?: string) => {
+    const term = termOverride ?? upTerm;
+    const year = yearOverride ?? upYear;
+    setUpLoading(true);
+    setUpData([]);
+    setUpDebug(null);
+    try {
+      // Query students with the exact filter used by fetchSecondaryData (or + is.null)
+      const studentGradeMap = new Map<string, string>();
+      {
+        const PAGE_SIZE_S = 500;
+        let sfrom = 0;
+        while (true) {
+          const { data: sdata } = await supabase
+            .from('students')
+            .select('id, sections(name, grade_id, grades(name))')
+            .or(`school_id.eq.${school_id},school_id.is.null`)
+            .range(sfrom, sfrom + PAGE_SIZE_S - 1);
+          for (const s of (sdata || [])) {
+            const sec = Array.isArray(s.sections) ? s.sections[0] : s.sections;
+            const gradeObj = Array.isArray(sec?.grades) ? sec.grades[0] : sec?.grades;
+            const gName: string = gradeObj?.name || '';
+            if (gName) studentGradeMap.set(String(s.id), gName);
+          }
+          if ((sdata || []).length < PAGE_SIZE_S) break;
+          sfrom += PAGE_SIZE_S;
+        }
+      }
+
+      // Simple results query — only needs score, student_id, subject name
+      const PAGE_SIZE = 500;
+      let allRows: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('results')
+          .select('score, student_id, subjects(name)')
+          .eq('school_id', school_id)
+          .eq('term', term)
+          .eq('year', parseInt(year))
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        allRows = [...allRows, ...(data || [])];
+        if ((data || []).length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+
+      // grade → subject → studentId → scores[]  (track per-learner so we can compute % at L4+)
+      const perStudentMap = new Map<string, Map<string, Map<string, number[]>>>();
+      const gradeCanonical = new Map<string, string>();
+      let matchedRows = 0;
+
+      for (const row of allRows) {
+        const score = Number(row.score);
+        if (isNaN(score)) continue;
+        const subj = (row.subjects?.name || '').toLowerCase().trim();
+        if (!subj) continue;
+        const sid = String(row.student_id);
+        const rawGrade = studentGradeMap.get(sid) || '';
+        if (!rawGrade) continue;
+        matchedRows++;
+        const gKey = rawGrade.toLowerCase().trim();
+        gradeCanonical.set(gKey, rawGrade);
+        if (!perStudentMap.has(gKey)) perStudentMap.set(gKey, new Map());
+        const subjMap = perStudentMap.get(gKey)!;
+        if (!subjMap.has(subj)) subjMap.set(subj, new Map());
+        const stuMap = subjMap.get(subj)!;
+        if (!stuMap.has(sid)) stuMap.set(sid, []);
+        stuMap.get(sid)!.push(score);
+      }
+
+      const gradesFound = [...gradeCanonical.values()];
+      console.log('[UP] students mapped:', studentGradeMap.size, '| resultRows:', allRows.length, '| matchedRows:', matchedRows, '| grades:', gradesFound);
+      for (const [gk, subjMap] of perStudentMap.entries()) {
+        console.log('[UP] grade:', gk, '→ subjects:', [...subjMap.keys()].join(', '));
+      }
+      setUpDebug({ resultRows: allRows.length, studentRows: studentGradeMap.size, matchedRows, gradesFound });
+
+      const calcAvg = (scores: number[]) => scores.reduce((a, b) => a + b, 0) / scores.length;
+
+      // For a given subject (stuMap), compute:
+      //   avg  = mean of all learner-averages
+      //   pct  = % of learners whose individual average ≥ 50 (Level 4+)
+      const subjectStats = (stuMap: Map<string, number[]>): { avg: number; pct: number } => {
+        if (stuMap.size === 0) return { avg: -1, pct: -1 };
+        const learnerAvgs = [...stuMap.values()].map(calcAvg);
+        const avg = calcAvg(learnerAvgs);
+        const pct = (learnerAvgs.filter(a => a >= 50).length / learnerAvgs.length) * 100;
+        return { avg, pct };
+      };
+
+      // Find the best-matching subject by keyword list; returns stats + subject name
+      const findSubject = (
+        subjMap: Map<string, Map<string, number[]>>,
+        keywords: string[]
+      ): { avg: number; pct: number; found: string } => {
+        for (const kw of keywords) {
+          for (const [name, stuMap] of subjMap.entries()) {
+            if (name.includes(kw) && stuMap.size > 0) {
+              return { ...subjectStats(stuMap), found: name };
+            }
+          }
+        }
+        return { avg: -1, pct: -1, found: '' };
+      };
+
+      // Fallback: top subject by learner count (excluding one subject name)
+      const topSubject = (
+        subjMap: Map<string, Map<string, number[]>>,
+        exclude: string
+      ): { avg: number; pct: number; found: string } => {
+        let bestCount = 0;
+        let best = { avg: -1, pct: -1, found: '' };
+        for (const [name, stuMap] of subjMap.entries()) {
+          if (name === exclude) continue;
+          if (stuMap.size > bestCount) {
+            bestCount = stuMap.size;
+            best = { ...subjectStats(stuMap), found: name };
+          }
+        }
+        return best;
+      };
+
+      const results: any[] = UNDERPERF_GRADES.map(gradeName => {
+        const gKey = gradeName.toLowerCase();
+        const shortKey = gradeName.replace(/^grade\s*/i, '').toLowerCase();
+        const isLowerPhase = LOWER_GRADES.has(gKey);
+        const subjMap = perStudentMap.get(gKey) || perStudentMap.get(shortKey);
+
+        if (!subjMap || subjMap.size === 0) {
+          return { grade: gradeName, isLowerPhase, lang: { avg: -1, pct: -1, found: '' }, maths: { avg: -1, pct: -1, found: '' }, performing: null };
+        }
+
+        // Maths
+        let maths = findSubject(subjMap, ['math', 'numeracy', 'number']);
+        if (maths.avg < 0) maths = { ...subjectStats([...subjMap.values()][0] || new Map()), found: 'overall' };
+
+        // Language
+        let lang: { avg: number; pct: number; found: string };
+        if (isLowerPhase) {
+          lang = findSubject(subjMap, ['xitsonga', 'isixitsonga', 'tshivenda', 'sepedi', 'isizulu', 'setswana', 'siswati', 'afrikaans', 'home lang', 'hl', 'first lang', 'language', 'lolt']);
+        } else {
+          lang = findSubject(subjMap, ['english', 'fal', 'first additional', 'home lang', 'hl', 'language', 'afrikaans', 'lolt']);
+        }
+        if (lang.avg < 0) lang = topSubject(subjMap, maths.found);
+
+        // Performing = ≥60% of learners achieved Level 4 (≥50%) in BOTH subjects
+        let performing: boolean | null = null;
+        if (lang.pct >= 0 && maths.pct >= 0) performing = lang.pct >= 60 && maths.pct >= 60;
+        else if (maths.pct >= 0) performing = maths.pct >= 60;
+
+        return { grade: gradeName, isLowerPhase, lang, maths, performing };
+      });
+
+      setUpData(results);
+    } catch (err: any) {
+      console.error('Underperformance fetch error:', err.message);
+    } finally {
+      setUpLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'underperformance') {
+      // fetchUpAvailableOptions already calls fetchUnderperformanceData internally
+      fetchUpAvailableOptions();
+    }
+  }, [activeTab]);
+
+  // Re-run when allStudents finishes loading while on this tab
+  useEffect(() => {
+    if (activeTab === 'underperformance' && allStudents.length > 0) {
+      fetchUnderperformanceData();
+    }
+  }, [allStudents]);
+
+  useEffect(() => {
+    if (activeTab === 'underperformance' && (upAvailableYears.length > 0 || upAvailableTerms.length > 0)) {
+      fetchUnderperformanceData();
+    }
+  }, [upTerm, upYear]);
+
+  // ── Summary of Results ──────────────────────────────────────────────────────
+  const CAPS_LEVEL = (score: number): number => {
+    if (score >= 80) return 7;
+    if (score >= 70) return 6;
+    if (score >= 60) return 5;
+    if (score >= 50) return 4;
+    if (score >= 40) return 3;
+    if (score >= 30) return 2;
+    return 1;
+  };
+
+  const GRADE_SORT = (g: string): number => {
+    const n = g.toLowerCase().replace(/^grade\s*/, '').trim();
+    if (n === 'r') return 0;
+    const num = parseInt(n);
+    return isNaN(num) ? 99 : num;
+  };
+
+  const fetchResultsSummary = async (termOverride?: string, yearOverride?: string) => {
+    const term = termOverride ?? rsTerm;
+    const year = yearOverride ?? rsYear;
+    setRsLoading(true);
+    setRsData([]);
+    try {
+      // Build studentId → gradeName map
+      const studentGradeMap = new Map<string, string>();
+      let sfrom = 0;
+      while (true) {
+        const { data: sdata } = await supabase
+          .from('students')
+          .select('id, sections(name, grade_id, grades(name))')
+          .or(`school_id.eq.${school_id},school_id.is.null`)
+          .range(sfrom, sfrom + 499);
+        for (const s of (sdata || [])) {
+          const sec = Array.isArray(s.sections) ? s.sections[0] : s.sections;
+          const gradeObj = Array.isArray(sec?.grades) ? sec.grades[0] : sec?.grades;
+          const gName: string = gradeObj?.name || '';
+          if (gName) studentGradeMap.set(String(s.id), gName);
+        }
+        if ((sdata || []).length < 500) break;
+        sfrom += 500;
+      }
+
+      // Fetch results for term/year
+      let allRows: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('results')
+          .select('score, student_id, subjects(name)')
+          .eq('school_id', school_id)
+          .eq('term', term)
+          .eq('year', parseInt(year))
+          .range(from, from + 499);
+        if (error) throw error;
+        allRows = [...allRows, ...(data || [])];
+        if ((data || []).length < 500) break;
+        from += 500;
+      }
+
+      // grade → subject → studentId → scores[]
+      const map = new Map<string, Map<string, Map<string, number[]>>>();
+      for (const row of allRows) {
+        const score = Number(row.score);
+        if (isNaN(score)) continue;
+        const subj = (row.subjects?.name || '').trim();
+        if (!subj) continue;
+        const sid = String(row.student_id);
+        const rawGrade = studentGradeMap.get(sid) || '';
+        if (!rawGrade) continue;
+        const gKey = rawGrade;
+        if (!map.has(gKey)) map.set(gKey, new Map());
+        const subjMap = map.get(gKey)!;
+        if (!subjMap.has(subj)) subjMap.set(subj, new Map());
+        const stuMap = subjMap.get(subj)!;
+        if (!stuMap.has(sid)) stuMap.set(sid, []);
+        stuMap.get(sid)!.push(score);
+      }
+
+      // Collect available terms/years
+      const allTerms = [...new Set(allRows.map((r: any) => r.term as string))].sort();
+      const allYears = [...new Set(allRows.map((r: any) => String(r.year)))].sort((a, b) => Number(b) - Number(a));
+      if (allTerms.length) setRsAvailableTerms(allTerms);
+      if (allYears.length) setRsAvailableYears(allYears);
+
+      // Build result rows
+      const rows: any[] = [];
+      for (const [grade, subjMap] of map.entries()) {
+        for (const [subject, stuMap] of subjMap.entries()) {
+          const learnerAvgs = [...stuMap.values()].map(
+            scores => scores.reduce((a, b) => a + b, 0) / scores.length
+          );
+          const total = learnerAvgs.length;
+          const levels: Record<number, { count: number; pct: number }> = {};
+          for (let l = 1; l <= 7; l++) levels[l] = { count: 0, pct: 0 };
+          for (const avg of learnerAvgs) {
+            const lv = CAPS_LEVEL(avg);
+            levels[lv].count++;
+          }
+          for (let l = 1; l <= 7; l++) {
+            levels[l].pct = total > 0 ? (levels[l].count / total) * 100 : 0;
+          }
+          rows.push({ grade, subject, total, levels, gradeSort: GRADE_SORT(grade) });
+        }
+      }
+
+      rows.sort((a, b) => a.gradeSort - b.gradeSort || a.subject.localeCompare(b.subject));
+      setRsData(rows);
+    } catch (err: any) {
+      console.error('Results summary fetch error:', err.message);
+    } finally {
+      setRsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'results-summary') fetchResultsSummary();
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'results-summary') fetchResultsSummary();
+  }, [rsTerm, rsYear]);
+
+  // ── Learners at Risk ─────────────────────────────────────────────────────────
+  const getAtRiskInterventions = (capsLevel: number, subjectName: string, trend: string): string[] => {
+    const s = subjectName.toLowerCase();
+    const isMaths = s.includes('math');
+    const isLang = s.includes('english') || s.includes('xitsonga') || s.includes('afrikaans') || s.includes('zulu') || s.includes('sesotho') || s.includes('sepedi') || s.includes('setswana');
+    const list: string[] = [];
+    if (capsLevel <= 1) {
+      list.push('Schedule an urgent individual support session with the learner');
+      list.push('Notify parent/guardian immediately and arrange a face-to-face meeting');
+      list.push('Refer to school learning support or remedial programme');
+      list.push('Develop an Individual Support Plan (ISP) in consultation with the HOD');
+      if (isMaths) {
+        list.push('Daily number drills and basic operations revision (15 min per day)');
+        list.push('Use concrete manipulatives (counters, number lines) to build conceptual understanding');
+        list.push('Run a diagnostic assessment to identify and target specific gaps');
+      } else if (isLang) {
+        list.push('Daily oral reading sessions with a reading partner or teacher');
+        list.push('Intensive vocabulary and phonics reinforcement activities');
+        list.push('Refer to a reading recovery or language support programme');
+      } else {
+        list.push('Provide simplified notes and structured study guides');
+        list.push('Break content into smaller achievable chunks with clear milestones');
+      }
+    } else if (capsLevel === 2) {
+      list.push('Assign a peer study buddy or organise a small-group session (2–4 learners)');
+      list.push('Send home a written progress concern notice to parents/guardians');
+      list.push('Provide additional targeted practice worksheets every week');
+      if (isMaths) {
+        list.push('Focus on foundational concepts before introducing new work');
+        list.push('Use visual models, number lines, and diagrams to support reasoning');
+      } else if (isLang) {
+        list.push('Guided reading group sessions twice per week');
+        list.push('Comprehension booster activities with scaffolded questions');
+      } else {
+        list.push('Use mind maps and graphic organisers for key concepts');
+        list.push('Regular low-stakes formative quizzes to build confidence');
+      }
+    } else {
+      list.push('Provide differentiated in-class support activities');
+      list.push('Weekly mini-assessments to monitor progress closely');
+      list.push('Encourage peer discussion and collaborative learning');
+      if (isMaths) list.push('Additional targeted problem-solving practice at home');
+      else if (isLang) list.push('Targeted comprehension and writing exercises');
+      else list.push('Encourage self-study using provided notes and resources');
+    }
+    if (trend === 'down') {
+      list.push('Investigate root cause of declining performance (home environment, motivation, health)');
+      list.push('Increase check-in frequency — brief individual conversations once or twice a week');
+    }
+    return list;
+  };
+
+  const fetchAtRisk = async () => {
+    setArLoading(true);
+    setArData([]);
+    try {
+      const studentMap = new Map<string, { grade: string; section: string; name: string }>();
+      let sfrom = 0;
+      while (true) {
+        const { data: sdata } = await supabase
+          .from('students')
+          .select('id, name, sections(name, grades(name))')
+          .or(`school_id.eq.${school_id},school_id.is.null`)
+          .range(sfrom, sfrom + 499);
+        for (const s of (sdata || [])) {
+          const sec = Array.isArray(s.sections) ? s.sections[0] : s.sections;
+          const gradeObj = Array.isArray(sec?.grades) ? sec.grades[0] : sec?.grades;
+          const gName = gradeObj?.name || '';
+          if (gName) studentMap.set(String(s.id), { grade: gName, section: sec?.name || '', name: s.name || '' });
+        }
+        if ((sdata || []).length < 500) break;
+        sfrom += 500;
+      }
+
+      let allRows: any[] = [];
+      let rfrom = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('results')
+          .select('score, student_id, term, year, subjects(name)')
+          .eq('school_id', school_id)
+          .range(rfrom, rfrom + 499);
+        if (error) throw error;
+        allRows = [...allRows, ...(data || [])];
+        if ((data || []).length < 500) break;
+        rfrom += 500;
+      }
+
+      // group: studentId|||subject → { termKey → scores[] }
+      const groupMap = new Map<string, { termScores: Map<string, number[]>; info: any; subject: string }>();
+      for (const row of allRows) {
+        const score = Number(row.score);
+        if (isNaN(score)) continue;
+        const subj = (row.subjects?.name || '').trim();
+        if (!subj) continue;
+        const sid = String(row.student_id);
+        const info = studentMap.get(sid);
+        if (!info) continue;
+        const key = `${sid}|||${subj}`;
+        if (!groupMap.has(key)) groupMap.set(key, { termScores: new Map(), info, subject: subj });
+        const termKey = `${row.year}|${row.term}`;
+        const g = groupMap.get(key)!;
+        if (!g.termScores.has(termKey)) g.termScores.set(termKey, []);
+        g.termScores.get(termKey)!.push(score);
+      }
+
+      const rows: any[] = [];
+      for (const [key, { termScores, info, subject }] of groupMap.entries()) {
+        const sorted = [...termScores.keys()].sort((a, b) => {
+          const [ya, ta] = a.split('|'); const [yb, tb] = b.split('|');
+          return (parseInt(ya) * 10 + (parseInt(ta.replace(/\D/g, '')) || 1)) - (parseInt(yb) * 10 + (parseInt(tb.replace(/\D/g, '')) || 1));
+        });
+        const termAvgs = sorted.map(tk => { const sc = termScores.get(tk)!; return sc.reduce((a, b) => a + b, 0) / sc.length; });
+        const latest = termAvgs[termAvgs.length - 1];
+        const prev = termAvgs.length >= 2 ? termAvgs[termAvgs.length - 2] : null;
+        const trend = prev === null ? 'new' : latest > prev + 5 ? 'up' : latest < prev - 5 ? 'down' : 'stable';
+        const passmark = getSubjectPassMark(subject, 40);
+        const capsLevel = CAPS_LEVEL(latest);
+        const deficit = passmark - latest;
+        let prob = deficit > 0 ? 0.5 + (deficit / passmark) * 0.45 : Math.max(0, 0.35 - ((-deficit) / passmark) * 0.5);
+        if (trend === 'down') prob = Math.min(0.99, prob + 0.1);
+        if (trend === 'up') prob = Math.max(0, prob - 0.1);
+        prob = Math.min(0.99, Math.max(0, prob));
+        if (prob < 0.20) continue;
+        const tier = prob >= 0.60 ? 'high' : prob >= 0.35 ? 'medium' : 'watch';
+        const [sid] = key.split('|||');
+        rows.push({ studentId: sid, studentName: info.name, grade: info.grade, section: info.section, subject, latest, prev, trend, passmark, prob, tier, capsLevel, interventions: getAtRiskInterventions(capsLevel, subject, trend) });
+      }
+      rows.sort((a, b) => (['high','medium','watch'].indexOf(a.tier)) - (['high','medium','watch'].indexOf(b.tier)) || a.grade.localeCompare(b.grade) || a.studentName.localeCompare(b.studentName));
+      setArData(rows);
+    } catch (err: any) {
+      console.error('At-risk fetch error:', err.message);
+    } finally {
+      setArLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'at-risk') fetchAtRisk();
+  }, [activeTab]);
+
+  const fetchCertificateData = async () => {
+    if (certType === 'subject' && !certSubject) { setCertData([]); return; }
+    setCertLoading(true);
+    setCertData([]);
+    try {
+      const { data, error } = await supabase
+        .from('results')
+        .select('score, subject_id, student_id, students(id, first_name, last_name, student_id, sections(name, grade_id, grades(name))), subjects(name)')
+        .eq('school_id', school_id)
+        .eq('term', certTerm)
+        .eq('year', parseInt(certYear));
+      if (error) throw error;
+
+      const studentMap = new Map<string, any>();
+      for (const row of (data || [])) {
+        const sid = row.student_id;
+        if (!sid) continue;
+        if (!studentMap.has(sid)) {
+          studentMap.set(sid, {
+            student: row.students,
+            section: row.students?.sections,
+            grade: row.students?.sections?.grades,
+            subjectTotals: new Map<string, { total: number; count: number }>(),
+          });
+        }
+        const entry = studentMap.get(sid)!;
+        if (!entry.subjectTotals.has(row.subject_id)) entry.subjectTotals.set(row.subject_id, { total: 0, count: 0 });
+        const ss = entry.subjectTotals.get(row.subject_id)!;
+        ss.total += Number(row.score) || 0;
+        ss.count += 1;
+      }
+
+      const allStudentAggs = Array.from(studentMap.values()).map(entry => {
+        let sumAvg = 0, numSubjects = 0;
+        for (const [, ss] of entry.subjectTotals) { sumAvg += ss.total / ss.count; numSubjects++; }
+        return { ...entry, overallAverage: numSubjects > 0 ? sumAvg / numSubjects : 0 };
+      });
+
+      const filterGrade = (arr: any[]) => certGrade
+        ? arr.filter(s => grades.find(g => g.id === certGrade)?.name === s.grade?.name)
+        : arr;
+
+      const makeGroup = (key: string, label: string, learners: any[], extra: any = {}) => ({
+        group: label, ...extra, learners: learners.sort((a, b) => b.overallAverage - a.overallAverage).slice(0, 5)
+      });
+
+      if (certType === 'class') {
+        const groups = new Map<string, any[]>();
+        for (const s of filterGrade(allStudentAggs)) {
+          const key = `${s.grade?.name}||${s.section?.name}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(s);
+        }
+        setCertData(Array.from(groups.entries())
+          .map(([key, grp]) => {
+            const [gradeName, sectionName] = key.split('||');
+            return makeGroup(key, `${gradeName} — ${sectionName}`, grp, { gradeName, sectionName, type: 'class' });
+          })
+          .sort((a, b) => a.group.localeCompare(b.group)));
+      } else if (certType === 'grade') {
+        const groups = new Map<string, any[]>();
+        for (const s of filterGrade(allStudentAggs)) {
+          const key = s.grade?.name || 'Unknown';
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key)!.push(s);
+        }
+        setCertData(Array.from(groups.entries())
+          .map(([gradeName, grp]) => makeGroup(gradeName, gradeName, grp, { gradeName, type: 'grade' }))
+          .sort((a, b) => a.group.localeCompare(b.group)));
+      } else if (certType === 'subject' && certSubject) {
+        const subjectName = subjects.find(s => s.id === certSubject)?.name || '';
+        const groups = new Map<string, any[]>();
+        for (const s of filterGrade(allStudentAggs)) {
+          const ss = s.subjectTotals.get(certSubject);
+          if (!ss) continue;
+          const gradeName = s.grade?.name || 'Unknown';
+          if (!groups.has(gradeName)) groups.set(gradeName, []);
+          groups.get(gradeName)!.push({ ...s, overallAverage: ss.count > 0 ? ss.total / ss.count : 0 });
+        }
+        setCertData(Array.from(groups.entries())
+          .map(([gradeName, grp]) => makeGroup(gradeName, gradeName, grp, { gradeName, subjectName, type: 'subject' }))
+          .sort((a, b) => a.group.localeCompare(b.group)));
+      }
+    } catch (err: any) {
+      showMessage('error', err.message);
+    } finally {
+      setCertLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'certificates') fetchCertificateData();
+  }, [activeTab, certType, certTerm, certYear, certGrade, certSubject]);
 
   const fetchResultPublications = async () => {
     const { data } = await supabase
@@ -1238,9 +1939,14 @@ export default function AdminDashboard() {
       const totalSteps = phaseSections.length;
       let currentStep = 0;
 
-      // Build the slot order as day-first then period, so subjects are spread across
-      // all 5 days evenly instead of being clustered on one day.
-      // Order: Mon P1, Tue P1, Wed P1, Thu P1, Fri P1, Mon P2, Tue P2, …
+      // Build per-day available periods (respects per-day start/end overrides)
+      const dayAvailablePeriods: Record<string, string[]> = {};
+      for (const day of DAYS) {
+        const daySlots = calculatePeriodTimes(day);
+        dayAvailablePeriods[day] = daySlots.filter(s => !s.isBreak).map(s => s.name);
+      }
+
+      // Fallback spread slots for Phase 2 (fill extra periods_per_week beyond 5)
       const spreadSlots: { day: string; period: string }[] = [];
       for (let pIdx = 0; pIdx < availablePeriods.length; pIdx++) {
         for (const day of DAYS) {
@@ -1251,36 +1957,43 @@ export default function AdminDashboard() {
       for (const section of phaseSections) {
         const sectionGradeName = grades.find(g => g.id === section.grade_id)?.name ?? '';
         const sectionAssignments = shuffledAssignments.filter(a => a.section_id === section.id);
-        // Each assignment tracks its own pointer into spreadSlots so it spreads independently
-        // but starts after the previous assignment finished to avoid repeating early slots.
         let slotPointer = 0;
 
         for (const assignment of sectionAssignments) {
           const preplacedCount = preplaced[`${section.id}_${assignment.subject_id}`] || 0;
           let periodsToAssign = Math.max(0, (assignment.periods_per_week || 0) - preplacedCount);
+
+          // Phase 1: place ONE period per day across all 5 days (ensures every subject appears daily)
+          const shuffledDays = [...DAYS].sort(() => Math.random() - 0.5);
+          for (const day of shuffledDays) {
+            if (periodsToAssign <= 0) break;
+            const dayPeriods = dayAvailablePeriods[day] || availablePeriods;
+            for (const period of dayPeriods) {
+              const teacherKey = `${assignment.teacher_id}_${day}_${period}`;
+              const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === day && a.period === period);
+              const isReserved = isReservedSlot(day, period, sectionGradeName);
+              if (!teacherBusy[teacherKey] && !isSectionBusy && !isReserved) {
+                newAllocations.push({ section_id: section.id, subject_id: assignment.subject_id, teacher_id: assignment.teacher_id, day, period, school_id });
+                teacherBusy[teacherKey] = true;
+                periodsToAssign--;
+                break; // one per day — move to next day
+              }
+            }
+          }
+
+          // Phase 2: fill any remaining periods_per_week beyond 5 using spread slots
           let attempts = 0;
           const maxAttempts = spreadSlots.length * 3;
-
           while (periodsToAssign > 0 && attempts < maxAttempts) {
             const { day, period } = spreadSlots[slotPointer % spreadSlots.length];
             const teacherKey = `${assignment.teacher_id}_${day}_${period}`;
-
             const isSectionBusy = newAllocations.some(a => a.section_id === section.id && a.day === day && a.period === period);
             const isReserved = isReservedSlot(day, period, sectionGradeName);
-
             if (!teacherBusy[teacherKey] && !isSectionBusy && !isReserved) {
-              newAllocations.push({
-                section_id: section.id,
-                subject_id: assignment.subject_id,
-                teacher_id: assignment.teacher_id,
-                day,
-                period,
-                school_id
-              });
+              newAllocations.push({ section_id: section.id, subject_id: assignment.subject_id, teacher_id: assignment.teacher_id, day, period, school_id });
               teacherBusy[teacherKey] = true;
               periodsToAssign--;
             }
-
             slotPointer++;
             attempts++;
           }
@@ -1312,9 +2025,14 @@ export default function AdminDashboard() {
     }
   };
 
-  const calculatePeriodTimes = () => {
+  const calculatePeriodTimes = (day?: string) => {
+    const dayOverride = day ? (timetableConfig.daySchedules ?? {})[day] : undefined;
+    const startTime = dayOverride?.startTime || timetableConfig.startTime;
+    const knockOffTime = dayOverride?.knockOffTime || timetableConfig.knockOffTime;
+    const breaks = dayOverride?.breaks !== undefined ? dayOverride.breaks : (timetableConfig.breaks ?? []);
+
     const slots: { name: string; start: string; end: string; isBreak: boolean }[] = [];
-    let currentTime = timetableConfig.startTime;
+    let currentTime = startTime;
 
     const addMinutes = (time: string, minutes: number) => {
       const [h, m] = time.split(':').map(Number);
@@ -1324,15 +2042,13 @@ export default function AdminDashboard() {
       return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     };
 
-    const isTimeAfter = (time1: string, time2: string) => {
-      return time1 >= time2;
-    };
+    const isTimeAfter = (time1: string, time2: string) => time1 >= time2;
 
     let periodCount = 1;
     let safety = 0;
-    while (!isTimeAfter(currentTime, timetableConfig.knockOffTime) && safety < 50) {
+    while (!isTimeAfter(currentTime, knockOffTime) && safety < 50) {
       safety++;
-      const activeBreak = (timetableConfig.breaks ?? []).find(b => b.startTime === currentTime);
+      const activeBreak = breaks.find((b: any) => b.startTime === currentTime);
       
       if (activeBreak) {
         const endTime = addMinutes(currentTime, activeBreak.duration);
@@ -1340,13 +2056,11 @@ export default function AdminDashboard() {
         currentTime = endTime;
       } else {
         const endTime = addMinutes(currentTime, timetableConfig.periodDuration);
-        // Ensure period doesn't end AFTER knock off time (unless it's the last one)
-        if (isTimeAfter(endTime, timetableConfig.knockOffTime) && slots.length > 0) {
-           // If it's very close, we can still add it or just stop
+        if (isTimeAfter(endTime, knockOffTime) && slots.length > 0) {
            const [h1, m1] = endTime.split(':').map(Number);
-           const [h2, m2] = timetableConfig.knockOffTime.split(':').map(Number);
+           const [h2, m2] = knockOffTime.split(':').map(Number);
            const diff = (h1 * 60 + m1) - (h2 * 60 + m2);
-           if (diff > 5) break; // more than 5 mins over
+           if (diff > 5) break;
         }
         slots.push({ name: `Period ${periodCount}`, start: currentTime, end: endTime, isBreak: false });
         periodCount++;
@@ -1860,7 +2574,7 @@ export default function AdminDashboard() {
 
         let report = 'No results available to generate report.';
         if (subjectData.length > 0) {
-          report = await generateLearnerReport(`${s.first_name} ${s.last_name}`, subjectData);
+          report = buildLocalReport(`${s.last_name} ${s.first_name}`, subjectData);
         }
         profiles.push({ student: s, subjectData, report });
       }
@@ -2635,6 +3349,179 @@ export default function AdminDashboard() {
     XLSX.writeFile(wb, "Curriculum_Statistics.xlsx");
   };
 
+  const handleLrPrint = async () => {
+    const sectionObj = sections.find(s => s.id === lrSection);
+    const gradeObj   = grades.find(g => g.id === (sectionObj?.grade_id || lrGrade));
+    const gradeName  = gradeObj?.name || '';
+
+    let targetStudents: any[] = [];
+    if (lrMode === 'individual') {
+      const s = allStudents.find(st => st.id === lrStudent);
+      if (!s) { showMessage('error', 'Please select a learner.'); return; }
+      targetStudents = [s];
+    } else {
+      if (!lrSection) { showMessage('error', 'Please select a class.'); return; }
+      targetStudents = allStudents
+        .filter(s => s.section_id === lrSection)
+        .sort((a, b) => a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name));
+      if (targetStudents.length === 0) { showMessage('error', 'No learners found in this class.'); return; }
+    }
+
+    setLrLoading(true);
+    try {
+      const getMarkColor = (score: number) => score >= 80 ? '#d97706' : score >= 60 ? '#059669' : score >= 40 ? '#2563eb' : '#dc2626';
+      const getLevelLabel = (score: number) => {
+        if (score >= 80) return 'Level 7 — Outstanding';
+        if (score >= 70) return 'Level 6 — Meritorious';
+        if (score >= 60) return 'Level 5 — Substantial';
+        if (score >= 50) return 'Level 4 — Adequate';
+        if (score >= 40) return 'Level 3 — Moderate';
+        if (score >= 30) return 'Level 2 — Elementary';
+        return 'Level 1 — Not Achieved';
+      };
+
+      const schoolName = schoolInfo?.name || 'School';
+      const emis = schoolEmis || '';
+      const term = lrTerm;
+      const year = lrYear;
+
+      const pages = await Promise.all(targetStudents.map(async (s) => {
+        const { data: resultsData, error: resultsError } = await supabase
+          .from('results')
+          .select('score, term, year, subject_id, subjects(id, name)')
+          .eq('student_id', s.id)
+          .or(`school_id.eq.${school_id},school_id.is.null`)
+          .eq('term', term)
+          .eq('year', parseInt(year));
+
+        if (resultsError) console.error('Learner report results error:', resultsError);
+
+        const subjectMap: Record<string, number[]> = {};
+        (resultsData || []).forEach((r: any) => {
+          const n = r.subjects?.name || 'Unknown';
+          if (!subjectMap[n]) subjectMap[n] = [];
+          subjectMap[n].push(Number(r.score));
+        });
+        const subjectAverages = Object.entries(subjectMap)
+          .map(([name, scores]) => ({ name, score: scores.reduce((a, b) => a + b, 0) / scores.length }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        const avg = subjectAverages.length > 0
+          ? subjectAverages.reduce((a, b) => a + b.score, 0) / subjectAverages.length
+          : 0;
+
+        const studentGradeName = gradeName || s.sections?.grades?.name || '';
+        const { promoted, requirements } = assessCAPSPromotion(studentGradeName, subjectAverages);
+
+        const subjectRows = subjectAverages.map(sub => {
+          const pm = getSubjectPassMark(sub.name, 40);
+          return `<tr>
+            <td>${sub.name}</td>
+            <td style="text-align:center;font-weight:bold;color:${getMarkColor(sub.score)}">${sub.score.toFixed(1)}%</td>
+            <td style="text-align:center;font-size:10px">${getLevelLabel(sub.score)}</td>
+            <td style="text-align:center;font-weight:bold;color:${sub.score >= pm ? '#059669' : '#dc2626'}">${sub.score >= pm ? 'Pass' : 'Fail'}</td>
+          </tr>`;
+        }).join('');
+
+        const reqRows = requirements.map(r => `<tr>
+          <td>${r.label}</td>
+          <td style="text-align:center">${r.detail}</td>
+          <td style="text-align:center;font-weight:bold;color:${r.met ? '#059669' : '#dc2626'}">${r.met ? '✓ Met' : '✗ Not Met'}</td>
+        </tr>`).join('');
+
+        const promotionBanner = promoted === null
+          ? `<div class="promo-unknown">CAPS Promotion: Grade not mapped</div>`
+          : promoted
+            ? `<div class="promo-pass">PROMOTED ✓</div>`
+            : `<div class="promo-fail">NOT YET PROMOTED ✗</div>`;
+
+        return `<div class="page">
+          <div class="header">
+            <div>
+              <div class="school-name">${schoolName}</div>
+              ${emis ? `<div class="emis">EMIS: ${emis}</div>` : ''}
+              <div class="doc-title">Learner Academic Report — ${term}, ${year}</div>
+            </div>
+            <div class="date">Printed: ${new Date().toLocaleDateString('en-ZA')}</div>
+          </div>
+          <div class="hr"></div>
+          <div class="info-grid">
+            <div class="info-box"><div class="info-label">Full Name</div><div class="info-value">${s.first_name} ${s.last_name}</div></div>
+            <div class="info-box"><div class="info-label">Learner No.</div><div class="info-value">${s.student_id || 'N/A'}</div></div>
+            <div class="info-box"><div class="info-label">Grade / Class</div><div class="info-value">${studentGradeName} — ${s.sections?.name || sectionObj?.name || '—'}</div></div>
+            <div class="info-box"><div class="info-label">Gender</div><div class="info-value">${s.gender || '—'}</div></div>
+            <div class="info-box"><div class="info-label">Overall Average</div><div class="info-value" style="color:${getMarkColor(avg)}">${avg.toFixed(1)}%</div></div>
+            <div class="info-box"><div class="info-label">Contact</div><div class="info-value">${s.phone || '—'}</div></div>
+          </div>
+          <h3 class="section-title">Academic Performance — ${term}</h3>
+          ${subjectAverages.length > 0
+            ? `<table><thead><tr><th>Subject</th><th>Average Mark</th><th>Level</th><th>Status</th></tr></thead><tbody>${subjectRows}</tbody></table>`
+            : '<p class="no-data">No results recorded for this term.</p>'}
+          ${requirements.length > 0 ? `
+          <h3 class="section-title caps-title">CAPS Promotion Requirements</h3>
+          <table><thead><tr><th>Requirement</th><th>Result</th><th>Status</th></tr></thead><tbody>${reqRows}</tbody></table>
+          ${promotionBanner}` : ''}
+          <div class="footer-section">
+            <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Class Teacher Signature</div></div>
+            <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Principal Signature</div></div>
+            <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Date</div></div>
+            <div class="stamp-box">OFFICIAL SCHOOL STAMP</div>
+          </div>
+          <div class="footer-text">${schoolName} — Learner Academic Report — ${term} ${year} — CONFIDENTIAL</div>
+        </div>`;
+      }));
+
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+        <title>Learner Reports — ${schoolName} — Term ${term} ${year}</title>
+        <style>
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e293b;background:#fff}
+          .page{padding:28px 32px;page-break-after:always;max-width:780px;margin:0 auto}
+          .page:last-child{page-break-after:avoid}
+          .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+          .school-name{font-size:20px;font-weight:900;color:#059669}
+          .emis{font-size:9px;color:#64748b;font-weight:600;margin-top:1px}
+          .doc-title{font-size:12px;color:#64748b;font-weight:600;margin-top:2px}
+          .date{font-size:10px;color:#94a3b8;white-space:nowrap}
+          .hr{border:none;border-top:2.5px solid #059669;margin-bottom:14px}
+          .info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+          .info-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px}
+          .info-label{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:2px}
+          .info-value{font-size:12px;font-weight:700;color:#1e293b}
+          .section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#059669;margin:14px 0 7px}
+          .caps-title{color:#7c3aed}
+          table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:10px}
+          thead tr{background:#1e293b;color:#fff}
+          th{padding:6px 9px;text-align:left;font-size:8px;text-transform:uppercase;letter-spacing:.05em}
+          td{padding:5px 9px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+          tr:nth-child(even) td{background:#f8fafc}
+          .no-data{color:#94a3b8;font-style:italic;margin-bottom:8px}
+          .promo-pass{background:#dcfce7;border:2px solid #16a34a;border-radius:10px;padding:10px 16px;text-align:center;font-size:15px;font-weight:900;color:#15803d;letter-spacing:.05em;margin:12px 0}
+          .promo-fail{background:#fee2e2;border:2px solid #dc2626;border-radius:10px;padding:10px 16px;text-align:center;font-size:15px;font-weight:900;color:#b91c1c;letter-spacing:.05em;margin:12px 0}
+          .promo-unknown{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:10px;padding:8px 14px;text-align:center;font-size:11px;color:#64748b;margin:12px 0}
+          .footer-section{display:flex;align-items:flex-end;gap:20px;margin-top:20px}
+          .sig-block{flex:1}
+          .sig-line{border-bottom:1px solid #cbd5e1;margin-bottom:4px;height:28px}
+          .sig-label{font-size:8px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em}
+          .stamp-box{width:90px;height:50px;border:1.5px solid #059669;border-radius:8px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:6px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#059669;padding:5px}
+          .footer-text{margin-top:12px;font-size:7px;color:#94a3b8;text-align:center;border-top:1px solid #f1f5f9;padding-top:6px}
+        </style>
+      </head><body>${pages.join('')}</body></html>`;
+
+      const win = window.open('', '_blank');
+      if (!win) { showMessage('error', 'Pop-up blocked. Please allow pop-ups and try again.'); return; }
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 600);
+    } catch (err) {
+      console.error('Learner report print error:', err);
+      showMessage('error', 'Failed to generate reports. Please try again.');
+    } finally {
+      setLrLoading(false);
+    }
+  };
+
   const downloadPDF = () => {
     const doc = new jsPDF('landscape');
     const title = `${activeTab.replace('-', ' ').toUpperCase()} - ${new Date().toLocaleDateString()}`;
@@ -2803,6 +3690,11 @@ export default function AdminDashboard() {
                 { id: 'stats', label: 'Curriculum Stats', icon: BarChart3 },
                 { id: 'learner-list', label: 'Learner Profiling', icon: ClipboardList },
                 { id: 'subject-ranking', label: 'Subject Ranking Report', icon: Trophy },
+                { id: 'learner-reports', label: 'Learner Reports', icon: FileText },
+                { id: 'certificates', label: 'Certificates', icon: Trophy },
+                { id: 'underperformance', label: 'Underperformance Report', icon: TrendingDown },
+                { id: 'results-summary', label: 'Summary of Results', icon: BarChart3 },
+                { id: 'at-risk', label: 'Learners at Risk', icon: ShieldAlert },
               ]
             },
             {
@@ -4400,6 +5292,456 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
+          {activeTab === 'learner-reports' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Learner Reports</h2>
+                  <p className="text-sm text-slate-500 mt-1">Print individual or class reports with CAPS promotion status.</p>
+                </div>
+                <button
+                  onClick={handleLrPrint}
+                  disabled={lrLoading || (lrMode === 'individual' ? !lrStudent : !lrSection)}
+                  className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {lrLoading ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Generating...</>
+                    : <><Printer className="w-4 h-4" /> Print / Save PDF</>}
+                </button>
+              </div>
+
+              {/* Mode toggle */}
+              <div className="flex gap-3">
+                {(['class', 'individual'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setLrMode(m); setLrStudent(''); }}
+                    className={`px-5 py-2.5 rounded-xl font-semibold text-sm transition-all border ${lrMode === m ? 'bg-primary-600 text-white border-primary-600 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}
+                  >
+                    {m === 'class' ? 'Whole Class' : 'Individual Learner'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Filters */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+                {[
+                  { label: 'Grade', content: (
+                    <select value={lrGrade} onChange={e => { setLrGrade(e.target.value); setLrSection(''); setLrStudent(''); }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 focus:outline-none">
+                      <option value="">All Grades</option>
+                      {grades.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  )},
+                  { label: 'Class', content: (
+                    <select value={lrSection} onChange={e => { setLrSection(e.target.value); setLrStudent(''); }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 focus:outline-none">
+                      <option value="">Select class</option>
+                      {sections.filter(s => !lrGrade || s.grade_id === lrGrade).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )},
+                  { label: 'Term', content: (
+                    <select value={lrTerm} onChange={e => setLrTerm(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 focus:outline-none">
+                      {['1','2','3','4'].map(t => <option key={t} value={`Term ${t}`}>Term {t}</option>)}
+                    </select>
+                  )},
+                  { label: 'Year', content: (
+                    <select value={lrYear} onChange={e => setLrYear(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 focus:outline-none">
+                      {[0,1,2].map(offset => { const y = (new Date().getFullYear() - offset).toString(); return <option key={y} value={y}>{y}</option>; })}
+                    </select>
+                  )},
+                  ...(lrMode === 'individual' ? [{ label: 'Learner', content: (
+                    <select value={lrStudent} onChange={e => setLrStudent(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 focus:outline-none">
+                      <option value="">Select learner</option>
+                      {allStudents
+                        .filter(s => !lrSection ? (!lrGrade || sections.some(sec => sec.grade_id === lrGrade && sec.id === s.section_id)) : s.section_id === lrSection)
+                        .map(s => <option key={s.id} value={s.id}>{s.last_name}, {s.first_name}</option>)}
+                    </select>
+                  )}] : []),
+                ].map(({ label, content }) => (
+                  <div key={label} className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
+                    {content}
+                  </div>
+                ))}
+              </div>
+
+              {/* Preview info */}
+              <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wide flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-primary-500" /> Report Preview
+                </h3>
+                {lrMode === 'class' && lrSection ? (() => {
+                  const sObj = sections.find(s => s.id === lrSection);
+                  const gObj = grades.find(g => g.id === sObj?.grade_id);
+                  const studs = allStudents.filter(s => s.section_id === lrSection);
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-3">
+                        <span className="px-3 py-1.5 bg-primary-50 text-primary-700 rounded-lg text-xs font-semibold">{gObj?.name || '—'} — {sObj?.name || '—'}</span>
+                        <span className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">{lrTerm}, {lrYear}</span>
+                        <span className="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-semibold">{studs.length} learner{studs.length !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {studs.sort((a,b) => a.last_name.localeCompare(b.last_name)).map(s => (
+                          <div key={s.id} className="flex items-center gap-2 text-sm text-slate-600 py-1 border-b border-slate-50">
+                            <Users className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                            {s.last_name}, {s.first_name} <span className="text-slate-400 text-xs ml-auto">{s.student_id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })() : lrMode === 'individual' && lrStudent ? (() => {
+                  const s = allStudents.find(st => st.id === lrStudent);
+                  if (!s) return null;
+                  const sObj = sections.find(sec => sec.id === s.section_id);
+                  const gObj = grades.find(g => g.id === sObj?.grade_id);
+                  return (
+                    <div className="flex flex-wrap gap-3">
+                      <span className="px-3 py-1.5 bg-violet-50 text-violet-700 rounded-lg text-xs font-semibold">{s.first_name} {s.last_name}</span>
+                      <span className="px-3 py-1.5 bg-primary-50 text-primary-700 rounded-lg text-xs font-semibold">{gObj?.name || '—'} — {sObj?.name || '—'}</span>
+                      <span className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">{lrTerm}, {lrYear}</span>
+                    </div>
+                  );
+                })() : (
+                  <p className="text-sm text-slate-400 italic">
+                    {lrMode === 'class' ? 'Select a class above to preview the learner list.' : 'Select a learner above to preview their report.'}
+                  </p>
+                )}
+
+                {/* CAPS rules summary */}
+                <div className="mt-5 pt-4 border-t border-slate-100">
+                  <p className="text-xs font-bold text-violet-600 uppercase tracking-wide mb-2">CAPS Promotion Rules Applied</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600">
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="font-semibold">Grade R:</span> Xitsonga, Maths, Life Skills ≥ 40%</div>
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="font-semibold">Grades 1–3:</span> Xitsonga ≥ 50% (L4), English ≥ 40% (L3)</div>
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="font-semibold">Grades 4–6:</span> Xitsonga L4, English L3, Maths L3, any 2 others L3</div>
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="font-semibold">Grade 7:</span> Xitsonga L4, English L3, Maths L3, any 3 others L3</div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'certificates' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              {/* Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Academic Excellence Certificates</h2>
+                  <p className="text-sm text-slate-500 mt-1">Auto-generated top 5 per class, grade, or subject. Admin use only.</p>
+                </div>
+                <button
+                  onClick={() => window.print()}
+                  disabled={certData.length === 0 || certLoading}
+                  className="flex items-center gap-2 px-6 py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all shadow-lg shadow-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Printer className="w-4 h-4" /> Print All Certificates
+                </button>
+              </div>
+
+              {/* Filters */}
+              <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm no-print">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <div className="space-y-1.5 col-span-2 sm:col-span-1">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Certificate Type</label>
+                    <select value={certType} onChange={e => { setCertType(e.target.value as any); setCertSubject(''); }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-300 focus:outline-none">
+                      <option value="class">Top 5 per Class</option>
+                      <option value="grade">Top 5 per Grade</option>
+                      <option value="subject">Top 5 per Subject</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Term</label>
+                    <select value={certTerm} onChange={e => setCertTerm(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-300 focus:outline-none">
+                      {['1','2','3','4'].map(t => <option key={t} value={`Term ${t}`}>Term {t}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Year</label>
+                    <select value={certYear} onChange={e => setCertYear(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-300 focus:outline-none">
+                      {[0,1,2].map(offset => { const y = (new Date().getFullYear()-offset).toString(); return <option key={y} value={y}>{y}</option>; })}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Grade (optional)</label>
+                    <select value={certGrade} onChange={e => setCertGrade(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-300 focus:outline-none">
+                      <option value="">All Grades</option>
+                      {grades.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                  {certType === 'subject' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Subject</label>
+                      <select value={certSubject} onChange={e => setCertSubject(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-amber-300 focus:outline-none">
+                        <option value="">Select subject</option>
+                        {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Loading */}
+              {certLoading && (
+                <div className="flex flex-col items-center justify-center py-20 no-print">
+                  <div className="w-12 h-12 border-4 border-amber-200 border-t-amber-500 rounded-full animate-spin mb-4" />
+                  <p className="text-sm text-slate-500 font-medium">Generating certificates…</p>
+                </div>
+              )}
+
+              {/* Empty */}
+              {!certLoading && certData.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 no-print">
+                  <Trophy className="w-14 h-14 text-amber-200 mb-4" />
+                  <p className="text-slate-400 font-semibold">No results found for the selected filters.</p>
+                  {certType === 'subject' && !certSubject && (
+                    <p className="text-slate-400 text-sm mt-1">Please select a subject above.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Certificates */}
+              {!certLoading && certData.map((group, gIdx) => {
+                const positionLabels = ['', '1st', '2nd', '3rd', '4th', '5th'];
+                const medalEmojis    = ['', '🥇', '🥈', '🥉', '★', '★'];
+                return (
+                  <div key={gIdx}>
+                    {/* Group divider — screen only */}
+                    <div className="no-print flex items-center gap-3 mb-4">
+                      <div className="h-px flex-1 bg-amber-100" />
+                      <span className="text-xs font-black text-amber-600 uppercase tracking-widest px-3 py-1 bg-amber-50 rounded-full border border-amber-100">
+                        {group.group}
+                      </span>
+                      <div className="h-px flex-1 bg-amber-100" />
+                    </div>
+
+                    {/* Individual certificates */}
+                    {group.learners.map((learner: any, lIdx: number) => {
+                      const position = lIdx + 1;
+                      const avg = learner.overallAverage ?? 0;
+                      const achievementLine = group.type === 'subject'
+                        ? `for outstanding achievement in ${group.subjectName}`
+                        : group.type === 'grade'
+                        ? `for academic excellence in ${group.gradeName}`
+                        : `for academic excellence in ${group.gradeName} — ${group.sectionName}`;
+                      const metricLabel = group.type === 'subject' ? `${group.subjectName} Average` : 'Overall Average';
+
+                      return (
+                        <div key={lIdx} className="certificate-page mb-8 print:mb-0">
+                          {/* ── BLACK & GOLD CERTIFICATE CARD ── */}
+                          <div style={{
+                            background: 'linear-gradient(160deg, #0b0b18 0%, #1a1100 45%, #0b0b18 100%)',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            borderRadius: '1.25rem',
+                            padding: '0',
+                            minHeight: '380px',
+                            boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
+                          }}>
+                            {/* Outer gold border */}
+                            <div style={{
+                              position: 'absolute', inset: 0,
+                              border: '3px solid #d4af37',
+                              borderRadius: '1.25rem',
+                              pointerEvents: 'none',
+                              zIndex: 2,
+                            }} />
+                            {/* Inner faint gold border */}
+                            <div style={{
+                              position: 'absolute', inset: '10px',
+                              border: '1px solid rgba(212,175,55,0.3)',
+                              borderRadius: '0.75rem',
+                              pointerEvents: 'none',
+                              zIndex: 2,
+                            }} />
+
+                            {/* Corner ornaments */}
+                            {[
+                              { top: 14, left: 18 },
+                              { top: 14, right: 18 },
+                              { bottom: 14, left: 18 },
+                              { bottom: 14, right: 18 },
+                            ].map((pos, i) => (
+                              <div key={i} style={{
+                                position: 'absolute', ...pos,
+                                color: '#d4af37', fontSize: 28, lineHeight: 1, opacity: 0.75, zIndex: 3,
+                                transform: i === 1 ? 'scaleX(-1)' : i === 2 ? 'scaleY(-1)' : i === 3 ? 'scale(-1,-1)' : 'none',
+                              }}>❧</div>
+                            ))}
+
+                            {/* Position badge — top right */}
+                            <div style={{
+                              position: 'absolute', top: 28, right: 52, zIndex: 4,
+                              background: position <= 3
+                                ? 'linear-gradient(135deg, #b8860b 0%, #ffd700 50%, #b8860b 100%)'
+                                : 'linear-gradient(135deg, #555 0%, #999 50%, #555 100%)',
+                              borderRadius: '50%', width: 72, height: 72,
+                              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                              boxShadow: position <= 3 ? '0 6px 20px rgba(212,175,55,0.5)' : '0 4px 12px rgba(0,0,0,0.4)',
+                            }}>
+                              <span style={{ fontSize: 26, lineHeight: 1 }}>{medalEmojis[position]}</span>
+                              <span style={{ fontSize: 10, fontWeight: 900, color: position <= 3 ? '#3a2800' : '#fff', letterSpacing: '0.05em' }}>
+                                {positionLabels[position]}
+                              </span>
+                            </div>
+
+                            {/* Decorative radial glow */}
+                            <div style={{
+                              position: 'absolute', top: '50%', left: '50%',
+                              transform: 'translate(-50%,-50%)',
+                              width: 400, height: 400,
+                              background: 'radial-gradient(circle, rgba(212,175,55,0.08) 0%, transparent 70%)',
+                              pointerEvents: 'none',
+                            }} />
+
+                            {/* Main content */}
+                            <div style={{ position: 'relative', zIndex: 1, padding: '40px 60px 36px' }}>
+
+                              {/* School header */}
+                              <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                                {schoolInfo.logo && (
+                                  <img src={schoolInfo.logo} alt="Logo" style={{
+                                    height: 56, width: 56, objectFit: 'contain',
+                                    margin: '0 auto 10px',
+                                    filter: 'drop-shadow(0 2px 10px rgba(212,175,55,0.5))',
+                                    display: 'block',
+                                  }} />
+                                )}
+                                <div style={{
+                                  color: '#d4af37', fontWeight: 900, fontSize: 13,
+                                  letterSpacing: '0.35em', textTransform: 'uppercase', marginBottom: 3,
+                                }}>{schoolInfo.name || 'School Name'}</div>
+                                {schoolEmis && (
+                                  <div style={{ color: 'rgba(212,175,55,0.5)', fontSize: 10, letterSpacing: '0.12em' }}>
+                                    EMIS: {schoolEmis}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Gold rule with diamond */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+                                <div style={{ flex: 1, height: 1, background: 'linear-gradient(to right, transparent, #d4af37 60%, transparent)' }} />
+                                <span style={{ color: '#d4af37', fontSize: 14 }}>◆</span>
+                                <div style={{ flex: 1, height: 1, background: 'linear-gradient(to left, transparent, #d4af37 60%, transparent)' }} />
+                              </div>
+
+                              {/* Certificate of Academic Excellence */}
+                              <div style={{ textAlign: 'center', marginBottom: 18 }}>
+                                <div style={{
+                                  color: 'rgba(212,175,55,0.7)', fontWeight: 700, fontSize: 12,
+                                  letterSpacing: '0.4em', textTransform: 'uppercase', marginBottom: 6,
+                                }}>Certificate of</div>
+                                <div style={{
+                                  color: '#f5e07a', fontWeight: 900, fontSize: 28,
+                                  letterSpacing: '0.22em', textTransform: 'uppercase', lineHeight: 1,
+                                  textShadow: '0 0 40px rgba(212,175,55,0.35)',
+                                }}>Academic Excellence</div>
+                              </div>
+
+                              {/* Thin divider */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                                <div style={{ flex: 1, height: '0.5px', background: 'rgba(212,175,55,0.25)' }} />
+                                <span style={{ color: 'rgba(212,175,55,0.4)', fontSize: 10 }}>✦ ✦ ✦</span>
+                                <div style={{ flex: 1, height: '0.5px', background: 'rgba(212,175,55,0.25)' }} />
+                              </div>
+
+                              {/* Body */}
+                              <div style={{ textAlign: 'center', marginBottom: 22 }}>
+                                <div style={{
+                                  color: 'rgba(255,255,255,0.55)', fontSize: 12,
+                                  fontStyle: 'italic', letterSpacing: '0.08em', marginBottom: 10,
+                                }}>This is to certify that</div>
+
+                                <div style={{
+                                  color: '#f5e07a', fontWeight: 900, fontSize: 38, lineHeight: 1.1,
+                                  letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6,
+                                  textShadow: '0 0 30px rgba(212,175,55,0.5)',
+                                }}>
+                                  {learner.student?.first_name} {learner.student?.last_name}
+                                </div>
+
+                                <div style={{
+                                  color: 'rgba(255,255,255,0.4)', fontSize: 10,
+                                  letterSpacing: '0.15em', marginBottom: 14,
+                                }}>
+                                  Student No: {learner.student?.student_id || '—'}
+                                  {' · '}
+                                  {group.type === 'class'
+                                    ? `${group.gradeName} — ${group.sectionName}`
+                                    : group.gradeName}
+                                </div>
+
+                                <div style={{
+                                  color: 'rgba(255,255,255,0.75)', fontSize: 14,
+                                  lineHeight: 1.7, marginBottom: 14,
+                                }}>
+                                  has been awarded <span style={{ color: '#d4af37', fontWeight: 700 }}>
+                                    {position === 1 ? 'the highest honour — 1st Place' : `${positionLabels[position]} Place`}
+                                  </span>
+                                  <br />
+                                  <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>{achievementLine}</span>
+                                </div>
+
+                                {/* Score pill */}
+                                <div style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 10,
+                                  background: 'rgba(212,175,55,0.1)',
+                                  border: '1px solid rgba(212,175,55,0.35)',
+                                  borderRadius: 8, padding: '8px 24px',
+                                }}>
+                                  <span style={{ color: '#d4af37', fontWeight: 900, fontSize: 22 }}>{avg.toFixed(1)}%</span>
+                                  <span style={{ color: 'rgba(212,175,55,0.55)', fontSize: 11 }}>{metricLabel}</span>
+                                </div>
+                              </div>
+
+                              {/* Footer — signature lines */}
+                              <div style={{
+                                display: 'flex', alignItems: 'flex-end',
+                                justifyContent: 'space-between', paddingTop: 12,
+                                borderTop: '1px solid rgba(212,175,55,0.15)',
+                              }}>
+                                <div style={{ textAlign: 'center', flex: 1 }}>
+                                  <div style={{ borderTop: '1px solid rgba(212,175,55,0.4)', paddingTop: 6, width: 130, margin: '0 auto' }}>
+                                    <div style={{ color: 'rgba(212,175,55,0.7)', fontWeight: 700, fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+                                      Principal
+                                    </div>
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: 'center', flex: 1 }}>
+                                  <div style={{ color: 'rgba(212,175,55,0.5)', fontSize: 11, marginBottom: 4 }}>
+                                    Term {certTerm} · {certYear}
+                                  </div>
+                                  <div style={{ color: 'rgba(212,175,55,0.4)', fontSize: 16 }}>✦</div>
+                                </div>
+                                <div style={{ textAlign: 'center', flex: 1 }}>
+                                  <div style={{ borderTop: '1px solid rgba(212,175,55,0.4)', paddingTop: 6, width: 130, margin: '0 auto' }}>
+                                    <div style={{ color: 'rgba(212,175,55,0.7)', fontWeight: 700, fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+                                      Date
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </motion.div>
+          )}
+
           {activeTab === 'teachers' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
@@ -4880,7 +6222,59 @@ export default function AdminDashboard() {
                   </select>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                {/* Mobile card list */}
+                <div className="md:hidden space-y-3">
+                  {allStudents
+                    .filter(s => scheduleSelectedSections.includes(s.section_id))
+                    .sort((a, b) => (a.first_name + a.last_name).localeCompare(b.first_name + b.last_name))
+                    .map(student => {
+                      const studentSubjects = subjects.filter(sub => classSubjects.some(cs => cs.subject_id === sub.id && cs.section_id === student.section_id));
+                      const studentResults = scheduleResults.filter(r => r.student_id === student.id);
+                      let totalScore = 0; let subjectCount = 0; let failedHomeLanguage = false; let failedSubjects = 0;
+                      const rows = studentSubjects.map(subject => {
+                        const result = studentResults.find(r => r.subject_id === subject.id);
+                        const passMark = getSubjectPassMark(subject.name, subject.pass_mark);
+                        const score = result ? result.score : 0;
+                        const isPass = score >= passMark;
+                        if (result) { totalScore += score; subjectCount++; if (!isPass) failedSubjects++; if (subject.name.toLowerCase().includes('xitsonga') && !isPass) failedHomeLanguage = true; }
+                        return { subject, result, score, isPass };
+                      });
+                      const avg = subjectCount > 0 ? (totalScore / subjectCount).toFixed(1) : '0';
+                      const resultLabel = subjectCount === 0 ? null : (failedHomeLanguage ? 'FAIL (HL)' : failedSubjects > 0 ? 'FAIL' : 'PASS');
+                      return (
+                        <div key={student.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <p className="font-bold text-slate-900">{student.first_name} {student.last_name}</p>
+                              <p className="text-[11px] text-slate-400 font-mono">{student.student_id}</p>
+                            </div>
+                            {resultLabel && (
+                              <div className="text-right">
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${resultLabel === 'PASS' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{resultLabel}</span>
+                                <p className={`text-base font-black mt-0.5 ${getMarkColor(Number(avg))}`}>{avg}%</p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="divide-y divide-slate-50">
+                            {rows.map(({ subject, result, score, isPass }) => (
+                              <div key={subject.id} className="flex items-center justify-between py-2">
+                                <span className="text-sm text-slate-600">{subject.name}</span>
+                                {result ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-sm font-bold ${getMarkColor(score)}`}>{score}</span>
+                                    <span className="text-[10px] text-slate-400">L{getLevel(score).level}</span>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isPass ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>{isPass ? 'P' : 'F'}</span>
+                                  </div>
+                                ) : <span className="text-slate-300 text-sm">—</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+                {/* Desktop table */}
+                <div className="hidden md:block overflow-x-auto border border-slate-100 rounded-2xl">
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
@@ -5881,6 +7275,139 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
+                    {/* Per-Day Schedule Overrides */}
+                    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                      <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-primary-600" />
+                        Per-Day Schedule
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mb-3">Override start/end times per day — useful for assembly days</p>
+                      <div className="space-y-2">
+                        {DAYS.map(day => {
+                          const override = (timetableConfig.daySchedules ?? {})[day] || {};
+                          const hasOverride = !!(override.startTime || override.knockOffTime || override.breaks);
+                          const isEditing = editingDaySchedule === day;
+                          const dayForm = newDayBreakForm[day] || { name: '', startTime: '', duration: '' };
+                          return (
+                            <div key={day} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-900">{day}</span>
+                                  {hasOverride && (
+                                    <span className="text-[10px] px-1.5 py-0.5 bg-primary-50 text-primary-600 rounded font-bold">
+                                      {override.startTime || timetableConfig.startTime} – {override.knockOffTime || timetableConfig.knockOffTime}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => setEditingDaySchedule(isEditing ? null : day)}
+                                    className="text-[10px] text-slate-500 hover:text-primary-600 font-bold transition-colors"
+                                  >
+                                    {isEditing ? 'Done' : hasOverride ? 'Edit' : 'Override'}
+                                  </button>
+                                  {hasOverride && (
+                                    <button
+                                      onClick={() => {
+                                        const ds = { ...(timetableConfig.daySchedules ?? {}) };
+                                        delete ds[day];
+                                        setTimetableConfig({ ...timetableConfig, daySchedules: ds });
+                                      }}
+                                      className="text-[10px] text-red-400 hover:text-red-600 font-bold"
+                                    >
+                                      Reset
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {isEditing && (
+                                <div className="px-3 pb-3 border-t border-slate-100 space-y-3 pt-3">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="text-[10px] font-bold text-slate-500 uppercase">Start Time</label>
+                                      <input
+                                        type="time"
+                                        value={override.startTime || timetableConfig.startTime}
+                                        onChange={e => setTimetableConfig({ ...timetableConfig, daySchedules: { ...(timetableConfig.daySchedules ?? {}), [day]: { ...override, startTime: e.target.value } } })}
+                                        className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] font-bold text-slate-500 uppercase">End Time</label>
+                                      <input
+                                        type="time"
+                                        value={override.knockOffTime || timetableConfig.knockOffTime}
+                                        onChange={e => setTimetableConfig({ ...timetableConfig, daySchedules: { ...(timetableConfig.daySchedules ?? {}), [day]: { ...override, knockOffTime: e.target.value } } })}
+                                        className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-400 outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">
+                                      Breaks <span className="font-normal normal-case text-slate-400">(leave empty = use global breaks)</span>
+                                    </p>
+                                    {(override.breaks || []).map((b: any, bi: number) => (
+                                      <div key={bi} className="flex items-center gap-2 mb-1">
+                                        <span className="text-[10px] flex-1 text-slate-600">{b.name} · {b.startTime} · {b.duration}min</span>
+                                        <button
+                                          onClick={() => {
+                                            const nb = [...(override.breaks || [])];
+                                            nb.splice(bi, 1);
+                                            setTimetableConfig({ ...timetableConfig, daySchedules: { ...(timetableConfig.daySchedules ?? {}), [day]: { ...override, breaks: nb.length ? nb : undefined } } });
+                                          }}
+                                          className="text-red-400 hover:text-red-600 transition-colors"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <div className="grid grid-cols-3 gap-1 mt-1">
+                                      <input
+                                        type="text"
+                                        placeholder="Name"
+                                        value={dayForm.name}
+                                        onChange={e => setNewDayBreakForm({ ...newDayBreakForm, [day]: { ...dayForm, name: e.target.value } })}
+                                        className="px-2 py-1 text-[10px] border border-slate-200 rounded-lg focus:ring-1 focus:ring-primary-400 outline-none"
+                                      />
+                                      <input
+                                        type="time"
+                                        value={dayForm.startTime}
+                                        onChange={e => setNewDayBreakForm({ ...newDayBreakForm, [day]: { ...dayForm, startTime: e.target.value } })}
+                                        className="px-2 py-1 text-[10px] border border-slate-200 rounded-lg focus:ring-1 focus:ring-primary-400 outline-none"
+                                      />
+                                      <div className="flex gap-1">
+                                        <input
+                                          type="number"
+                                          placeholder="min"
+                                          value={dayForm.duration}
+                                          onChange={e => setNewDayBreakForm({ ...newDayBreakForm, [day]: { ...dayForm, duration: e.target.value } })}
+                                          className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded-lg focus:ring-1 focus:ring-primary-400 outline-none"
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            const d = parseInt(dayForm.duration) || 0;
+                                            if (dayForm.name && dayForm.startTime && d > 0) {
+                                              const nb = [...(override.breaks || []), { name: dayForm.name, startTime: dayForm.startTime, duration: d }];
+                                              setTimetableConfig({ ...timetableConfig, daySchedules: { ...(timetableConfig.daySchedules ?? {}), [day]: { ...override, breaks: nb } } });
+                                              setNewDayBreakForm({ ...newDayBreakForm, [day]: { name: '', startTime: '', duration: '' } });
+                                            }
+                                          }}
+                                          className="px-2 py-1 bg-primary-600 text-white rounded-lg text-[10px] font-bold hover:bg-primary-700 whitespace-nowrap"
+                                        >+</button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="pt-1">
+                                    <p className="text-[10px] text-slate-400">Preview: {calculatePeriodTimes(day).filter(s => !s.isBreak).length} periods · {calculatePeriodTimes(day).filter(s => !s.isBreak)[0]?.start} – {calculatePeriodTimes(day).filter(s => !s.isBreak).at(-1)?.end}</p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {/* Day Rules */}
                     <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
                       <h3 className="text-sm font-bold text-slate-900 mb-1 flex items-center gap-2">
@@ -6153,7 +7680,7 @@ export default function AdminDashboard() {
                   </div>
 
                   {ttViewMode === 'dayview' ? (() => {
-                    const allSlots = calculatePeriodTimes();
+                    const allSlots = calculatePeriodTimes(); // global — used for rule resolution
                     const periodSlots = allSlots.filter(s => !s.isBreak);
                     const activeSectionGradeName = grades.find(g => g.id === activeSection?.grade_id)?.name ?? '';
                     const resolvedRules = (timetableConfig.dayRules ?? []).map((rule: any) => {
@@ -6195,14 +7722,20 @@ export default function AdminDashboard() {
                               {filteredSections.length > 1 && <span className="text-xs text-slate-400">(showing first match — use grade/section filter to narrow down)</span>}
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                              {DAYS.map(day => (
+                              {DAYS.map(day => {
+                                const daySlots = calculatePeriodTimes(day);
+                                const hasDayOverride = !!(timetableConfig.daySchedules ?? {})[day];
+                                return (
                                 <div key={day} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                                   <div className="bg-primary-600 text-white px-5 py-3 flex items-center justify-between">
-                                    <span className="font-black text-base tracking-wide">{day}</span>
-                                    <span className="text-xs text-primary-200 font-medium">{allSlots.filter(s => !s.isBreak).length} periods</span>
+                                    <div>
+                                      <span className="font-black text-base tracking-wide">{day}</span>
+                                      {hasDayOverride && <span className="ml-2 text-[10px] bg-white/20 px-1.5 py-0.5 rounded font-bold">Custom hours</span>}
+                                    </div>
+                                    <span className="text-xs text-primary-200 font-medium">{daySlots.filter(s => !s.isBreak).length} periods</span>
                                   </div>
                                   <div className="divide-y divide-slate-100">
-                                    {allSlots.map((slot, sIdx) => {
+                                    {daySlots.map((slot, sIdx) => {
                                       if (slot.isBreak) {
                                         return (
                                           <div key={sIdx} className="flex items-center gap-3 px-4 py-2 bg-amber-50">
@@ -6277,7 +7810,8 @@ export default function AdminDashboard() {
                                     })}
                                   </div>
                                 </div>
-                              ))}
+                              );
+                              })}
                             </div>
                           </>
                         )}
@@ -7176,6 +8710,609 @@ export default function AdminDashboard() {
                 )}
               </motion.div>
             )}
+
+            {/* ── Underperformance Report ── */}
+            {activeTab === 'underperformance' && (
+              <motion.div key="underperformance" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+
+                {/* Header */}
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                      <TrendingDown className="w-6 h-6 text-red-500" /> Underperformance Report
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                      A school is <span className="font-semibold text-red-600">deemed to be underperforming</span> if fewer than 60% of Grade 6 learners achieve Level 4 or above (≥50%) in both the Language of Learning and Teaching (English) and Mathematics. Grades R–3 are tracked using Xitsonga and Mathematics; Grades 4–7 using English and Mathematics.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const grade6 = upData.find(d => d.grade === 'Grade 6');
+                      const schoolPerforming = grade6?.performing;
+                      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+                      const pageW = doc.internal.pageSize.getWidth();
+                      // Header
+                      doc.setFillColor(15, 23, 42);
+                      doc.rect(0, 0, pageW, 28, 'F');
+                      doc.setTextColor(255, 255, 255);
+                      doc.setFontSize(14);
+                      doc.setFont('helvetica', 'bold');
+                      doc.text('UNDERPERFORMANCE REPORT', pageW / 2, 11, { align: 'center' });
+                      doc.setFontSize(9);
+                      doc.setFont('helvetica', 'normal');
+                      doc.text(`${schoolInfo.name}   |   ${upTerm} ${upYear}`, pageW / 2, 20, { align: 'center' });
+                      if (schoolEmis) doc.text(`EMIS: ${schoolEmis}`, pageW / 2, 25, { align: 'center' });
+                      // Verdict banner
+                      const verdictY = 34;
+                      doc.setFillColor(schoolPerforming === false ? 220 : 22, schoolPerforming === false ? 38 : 163, schoolPerforming === false ? 38 : 74);
+                      doc.rect(14, verdictY, pageW - 28, 14, 'F');
+                      doc.setTextColor(255, 255, 255);
+                      doc.setFontSize(11);
+                      doc.setFont('helvetica', 'bold');
+                      doc.text(
+                        schoolPerforming === false ? 'SCHOOL IS UNDERPERFORMING (Grade 6 Benchmark)' :
+                        schoolPerforming === true ? 'SCHOOL IS PERFORMING (Grade 6 Benchmark)' : 'Grade 6 Data Not Available',
+                        pageW / 2, verdictY + 9, { align: 'center' }
+                      );
+                      // Table
+                      const tableRows = upData.map(d => [
+                        d.grade,
+                        d.isLowerPhase ? 'Xitsonga + Maths' : 'English + Maths',
+                        d.lang.pct >= 0 ? `${d.lang.pct}%` : '—',
+                        d.maths.pct >= 0 ? `${d.maths.pct}%` : '—',
+                        d.learnerCount > 0 ? String(d.learnerCount) : '—',
+                        d.performing === true ? 'PERFORMING' : d.performing === false ? 'UNDERPERFORMING' : 'NO DATA',
+                        d.grade === 'Grade 6' ? '← SCHOOL VERDICT' : '',
+                      ]);
+                      autoTable(doc, {
+                        startY: verdictY + 18,
+                        head: [['Grade', 'Proxy Subjects', 'Language %', 'Maths %', 'Learners', 'Status', 'Note']],
+                        body: tableRows,
+                        styles: { fontSize: 8, cellPadding: 2 },
+                        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+                        bodyStyles: { textColor: [30, 41, 59] },
+                        didParseCell: (data: any) => {
+                          if (data.section === 'body' && data.column.index === 5) {
+                            const val = data.cell.raw as string;
+                            data.cell.styles.textColor = val === 'PERFORMING' ? [22, 163, 74] : val === 'UNDERPERFORMING' ? [220, 38, 38] : [100, 116, 139];
+                            data.cell.styles.fontStyle = 'bold';
+                          }
+                        },
+                      });
+                      const footerY = (doc as any).lastAutoTable.finalY + 8;
+                      doc.setFontSize(7);
+                      doc.setFont('helvetica', 'italic');
+                      doc.setTextColor(100, 116, 139);
+                      doc.text('Level 4+ = score ≥ 50% (CAPS). Performing = ≥60% of learners at Level 4+ in BOTH proxy subjects. Grade 6 determines the school verdict.', pageW / 2, footerY, { align: 'center', maxWidth: pageW - 28 });
+                      doc.save(`Underperformance_Report_${upTerm}_${upYear}.pdf`);
+                    }}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-bold hover:bg-slate-900 transition-all shadow-md flex-shrink-0"
+                  >
+                    <Download className="w-4 h-4" /> Download PDF
+                  </button>
+                </div>
+
+                {/* Filters */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-wrap gap-4 items-end">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Term</label>
+                    <select value={upTerm} onChange={e => setUpTerm(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                      {(upAvailableTerms.length > 0 ? upAvailableTerms : ['Term 1','Term 2','Term 3','Term 4']).map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Year</label>
+                    <select value={upYear} onChange={e => setUpYear(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                      {(upAvailableYears.length > 0 ? upAvailableYears : Array.from({ length: 5 }, (_, i) => (new Date().getFullYear() - i).toString())).map(y => <option key={y}>{y}</option>)}
+                    </select>
+                  </div>
+                  {upAvailableYears.length > 0 && (
+                    <span className="text-xs text-slate-400 italic">Years with data: {upAvailableYears.join(', ')}</span>
+                  )}
+                </div>
+
+                {/* Debug info bar */}
+                {upDebug && (
+                  <div className={`rounded-xl border px-4 py-3 text-xs flex flex-wrap gap-3 items-center
+                    ${upDebug.resultRows === 0 ? 'bg-amber-50 border-amber-200 text-amber-700' : upDebug.matchedRows === 0 ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                    <span className="font-bold uppercase tracking-wide">Fetch Summary:</span>
+                    <span>Results rows: <strong>{upDebug.resultRows}</strong></span>
+                    <span>Students found: <strong>{upDebug.studentRows}</strong></span>
+                    <span>Matched rows: <strong>{upDebug.matchedRows}</strong></span>
+                    <span>Grades in DB: <strong>{upDebug.gradesFound.length > 0 ? upDebug.gradesFound.join(', ') : 'none'}</strong></span>
+                    {upDebug.resultRows === 0 && <span className="font-semibold">⚠ No results found for {upTerm} {upYear} — try a different term or year.</span>}
+                    {upDebug.resultRows > 0 && upDebug.matchedRows === 0 && <span className="font-semibold">⚠ Results exist but no students matched — check that learners are assigned to sections with grades.</span>}
+                  </div>
+                )}
+
+                {upLoading ? (
+                  <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
+                    <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+                    <span className="font-medium">Analysing learner performance data…</span>
+                  </div>
+                ) : upData.length === 0 ? (
+                  <div className="bg-slate-50 rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+                    <TrendingDown className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">Select a term and year, then click Refresh.</p>
+                  </div>
+                ) : (() => {
+                  const grade6 = upData.find(d => d.grade === 'Grade 6');
+                  const schoolPerforming = grade6?.performing;
+
+                  return (
+                    <div className="space-y-5">
+
+                      {/* School-level verdict banner */}
+                      <div className={`rounded-2xl p-6 flex items-center gap-5 border-2 shadow-lg
+                        ${schoolPerforming === false ? 'bg-red-50 border-red-300' : schoolPerforming === true ? 'bg-green-50 border-green-300' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0
+                          ${schoolPerforming === false ? 'bg-red-500' : schoolPerforming === true ? 'bg-green-500' : 'bg-slate-400'}`}>
+                          {schoolPerforming === false
+                            ? <ShieldAlert className="w-9 h-9 text-white" />
+                            : schoolPerforming === true
+                            ? <ShieldCheckIcon className="w-9 h-9 text-white" />
+                            : <AlertCircle className="w-9 h-9 text-white" />}
+                        </div>
+                        <div className="flex-1">
+                          <div className={`text-xs font-bold uppercase tracking-widest mb-1
+                            ${schoolPerforming === false ? 'text-red-500' : schoolPerforming === true ? 'text-green-600' : 'text-slate-400'}`}>
+                            Grade 6 Benchmark — School Conclusion
+                          </div>
+                          <div className={`text-2xl font-extrabold
+                            ${schoolPerforming === false ? 'text-red-700' : schoolPerforming === true ? 'text-green-700' : 'text-slate-500'}`}>
+                            {schoolPerforming === false ? 'School Is Underperforming'
+                              : schoolPerforming === true ? 'School Is Performing'
+                              : 'Grade 6 Data Not Available'}
+                          </div>
+                          <p className={`text-sm mt-1 ${schoolPerforming === false ? 'text-red-600' : schoolPerforming === true ? 'text-green-600' : 'text-slate-400'}`}>
+                            {schoolPerforming === false
+                              ? `Fewer than 60% of Grade 6 learners reached Level 4+ in English (${grade6?.lang?.pct >= 0 ? grade6.lang.pct.toFixed(2) + '%' : '—'}) and/or Mathematics (${grade6?.maths?.pct >= 0 ? grade6.maths.pct.toFixed(2) + '%' : '—'}).`
+                              : schoolPerforming === true
+                              ? `At least 60% of Grade 6 learners achieved Level 4+ in both English (${grade6?.lang?.pct >= 0 ? grade6.lang.pct.toFixed(2) + '%' : '—'}) and Mathematics (${grade6?.maths?.pct >= 0 ? grade6.maths.pct.toFixed(2) + '%' : '—'}).`
+                              : 'No Grade 6 results found for the selected term and year.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Grade performance table */}
+                      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4 text-slate-500" />
+                          <span className="font-bold text-slate-700 text-sm">Grade Performance — {upTerm} {upYear}</span>
+                          <span className="ml-auto text-xs text-slate-400">Performing = ≥60% of learners at Level 4+ (≥50%) · Grade 6 = school verdict</span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-200">
+                                <th className="text-left px-4 py-3 font-bold text-slate-600 text-xs uppercase tracking-wide">Grade</th>
+                                <th className="text-left px-4 py-3 font-bold text-slate-600 text-xs uppercase tracking-wide">Language Subject</th>
+                                <th className="text-center px-4 py-3 font-bold text-slate-600 text-xs uppercase tracking-wide">
+                                  <div>Lang % at L4+</div>
+                                  <div className="font-normal text-[10px] text-slate-400 normal-case tracking-normal">avg below</div>
+                                </th>
+                                <th className="text-center px-4 py-3 font-bold text-slate-600 text-xs uppercase tracking-wide">
+                                  <div>Maths % at L4+</div>
+                                  <div className="font-normal text-[10px] text-slate-400 normal-case tracking-normal">avg below</div>
+                                </th>
+                                <th className="text-center px-4 py-3 font-bold text-slate-600 text-xs uppercase tracking-wide">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {upData.map((row, idx) => {
+                                const langPct = row.lang.pct;
+                                const mathsPct = row.maths.pct;
+                                const langAvg = row.lang.avg;
+                                const mathsAvg = row.maths.avg;
+                                const hasData = langPct >= 0 || mathsPct >= 0;
+                                const isVerdict = row.grade === 'Grade 6';
+                                return (
+                                  <tr key={row.grade} className={`border-b border-slate-100 transition-colors
+                                    ${isVerdict ? 'bg-amber-50 font-semibold' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
+                                    <td className="px-4 py-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-slate-800">{row.grade}</span>
+                                        {isVerdict && <span className="text-[10px] bg-amber-300 text-amber-900 font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">School Verdict</span>}
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500 text-xs">
+                                      {row.isLowerPhase
+                                        ? <span className="text-violet-600 font-semibold">{row.lang.found ? row.lang.found.charAt(0).toUpperCase() + row.lang.found.slice(1) : 'Xitsonga'}</span>
+                                        : <span className="text-blue-600 font-semibold">{row.lang.found ? row.lang.found.charAt(0).toUpperCase() + row.lang.found.slice(1) : 'English'}</span>}
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                      {langPct >= 0
+                                        ? <div>
+                                            <span className={`block font-bold text-lg ${langPct >= 60 ? 'text-green-600' : 'text-red-600'}`}>{langPct.toFixed(2)}%</span>
+                                            <span className="block text-[11px] text-slate-400">avg {langAvg >= 0 ? langAvg.toFixed(2) + '%' : '—'}</span>
+                                          </div>
+                                        : <span className="text-slate-300 text-base">—</span>}
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                      {mathsPct >= 0
+                                        ? <div>
+                                            <span className={`block font-bold text-lg ${mathsPct >= 60 ? 'text-green-600' : 'text-red-600'}`}>{mathsPct.toFixed(2)}%</span>
+                                            <span className="block text-[11px] text-slate-400">avg {mathsAvg >= 0 ? mathsAvg.toFixed(2) + '%' : '—'}</span>
+                                          </div>
+                                        : <span className="text-slate-300 text-base">—</span>}
+                                    </td>
+                                    <td className="px-4 py-3 text-center">
+                                      {!hasData
+                                        ? <span className="text-slate-300 text-xs">No data</span>
+                                        : row.performing === true
+                                        ? <span className="inline-flex items-center gap-1 text-green-700 bg-green-100 font-bold text-xs px-3 py-1.5 rounded-full"><ChevronUp className="w-3 h-3" />Performing</span>
+                                        : row.performing === false
+                                        ? <span className="inline-flex items-center gap-1 text-red-700 bg-red-100 font-bold text-xs px-3 py-1.5 rounded-full"><TrendingDown className="w-3 h-3" />Underperforming</span>
+                                        : <span className="text-amber-600 text-xs font-semibold">Partial data</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-400">
+                          % at L4+ = percentage of learners whose individual average is ≥50% (Level 4). Performing = both Lang and Maths ≥60%. Grade 6 determines the school verdict.
+                        </div>
+                      </div>
+
+                    </div>
+                  );
+                })()}
+              </motion.div>
+            )}
+
+            {/* ── Summary of Results ── */}
+            {activeTab === 'results-summary' && (
+              <motion.div key="results-summary" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+
+                {/* Header */}
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                      <BarChart3 className="w-6 h-6 text-blue-500" /> Summary of Results
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+                      Per grade and subject: number of learners and percentage at each CAPS Level (L1–L7). Each learner's average across all assessments in the term determines their level.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+                      const pageW = doc.internal.pageSize.getWidth();
+                      doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+                      doc.text(`${schoolInfo?.name || 'School'} — Summary of Results`, pageW / 2, 18, { align: 'center' });
+                      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+                      doc.text(`Term: ${rsTerm}  |  Year: ${rsYear}${rsGrade ? '  |  Grade: ' + rsGrade : ''}`, pageW / 2, 25, { align: 'center' });
+                      const filtered = rsGrade ? rsData.filter(r => r.grade === rsGrade) : rsData;
+                      autoTable(doc, {
+                        startY: 30,
+                        head: [['Grade', 'Subject', 'Learners', 'L1\n0–29%', 'L2\n30–39%', 'L3\n40–49%', 'L4\n50–59%', 'L5\n60–69%', 'L6\n70–79%', 'L7\n80–100%']],
+                        body: filtered.map(r => [
+                          r.grade, r.subject, r.total,
+                          ...([1,2,3,4,5,6,7].map(l => `${r.levels[l].count} (${r.levels[l].pct.toFixed(1)}%)`))
+                        ]),
+                        styles: { fontSize: 8, cellPadding: 2 },
+                        headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+                        alternateRowStyles: { fillColor: [248, 250, 252] },
+                        columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 30 }, 2: { cellWidth: 16, halign: 'center' } },
+                      });
+                      doc.save(`results-summary-${rsTerm}-${rsYear}.pdf`);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all shadow-sm whitespace-nowrap"
+                  >
+                    <Download className="w-4 h-4" /> Download PDF
+                  </button>
+                </div>
+
+                {/* Filters */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Term</label>
+                      <select value={rsTerm} onChange={e => setRsTerm(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                        {(rsAvailableTerms.length > 0 ? rsAvailableTerms : ['Term 1','Term 2','Term 3','Term 4']).map(t => <option key={t}>{t}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Year</label>
+                      <select value={rsYear} onChange={e => setRsYear(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                        {(rsAvailableYears.length > 0 ? rsAvailableYears : Array.from({ length: 5 }, (_, i) => (new Date().getFullYear() - i).toString())).map(y => <option key={y}>{y}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Grade (optional)</label>
+                      <select value={rsGrade} onChange={e => setRsGrade(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                        <option value="">All Grades</option>
+                        {[...new Set(rsData.map(r => r.grade))].sort((a, b) => GRADE_SORT(a) - GRADE_SORT(b)).map(g => <option key={g}>{g}</option>)}
+                      </select>
+                    </div>
+                    <div className="ml-auto text-xs text-slate-400 self-end pb-2.5">
+                      {rsData.length > 0 && <span>{(rsGrade ? rsData.filter(r => r.grade === rsGrade) : rsData).length} grade–subject combinations</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* CAPS Level legend */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {[
+                    { l: 'L1', range: '0–29%', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200' },
+                    { l: 'L2', range: '30–39%', bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-100' },
+                    { l: 'L3', range: '40–49%', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+                    { l: 'L4', range: '50–59%', bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-200' },
+                    { l: 'L5', range: '60–69%', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200' },
+                    { l: 'L6', range: '70–79%', bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-200' },
+                    { l: 'L7', range: '80–100%', bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-300' },
+                  ].map(({ l, range, bg, text, border }) => (
+                    <span key={l} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border font-semibold ${bg} ${text} ${border}`}>
+                      {l} <span className="font-normal opacity-70">{range}</span>
+                    </span>
+                  ))}
+                </div>
+
+                {/* Table */}
+                {rsLoading ? (
+                  <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
+                    <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                    <span className="font-medium">Loading results data…</span>
+                  </div>
+                ) : rsData.length === 0 ? (
+                  <div className="bg-slate-50 rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+                    <BarChart3 className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium">No results found for {rsTerm} {rsYear}. Try a different term or year.</p>
+                  </div>
+                ) : (() => {
+                  const filtered = rsGrade ? rsData.filter(r => r.grade === rsGrade) : rsData;
+                  const LEVEL_STYLE: Record<number, string> = {
+                    1: 'bg-red-100 text-red-700',
+                    2: 'bg-red-50 text-red-600',
+                    3: 'bg-blue-50 text-blue-700',
+                    4: 'bg-blue-100 text-blue-800',
+                    5: 'bg-green-50 text-green-700',
+                    6: 'bg-green-100 text-green-800',
+                    7: 'bg-yellow-100 text-yellow-800',
+                  };
+                  let lastGrade = '';
+                  return (
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-800 text-white">
+                              <th className="text-left px-4 py-3 font-bold text-xs uppercase tracking-wide">Grade</th>
+                              <th className="text-left px-4 py-3 font-bold text-xs uppercase tracking-wide">Subject</th>
+                              <th className="text-center px-3 py-3 font-bold text-xs uppercase tracking-wide">Total</th>
+                              {[1,2,3,4,5,6,7].map(l => (
+                                <th key={l} className="text-center px-2 py-3 font-bold text-xs uppercase tracking-wide min-w-[80px]">
+                                  <div>L{l}</div>
+                                  <div className="font-normal text-[10px] opacity-60 normal-case tracking-normal">
+                                    {l === 1 ? '0–29%' : l === 2 ? '30–39%' : l === 3 ? '40–49%' : l === 4 ? '50–59%' : l === 5 ? '60–69%' : l === 6 ? '70–79%' : '80–100%'}
+                                  </div>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filtered.map((row, idx) => {
+                              const gradeChanged = row.grade !== lastGrade;
+                              lastGrade = row.grade;
+                              return (
+                                <tr key={`${row.grade}-${row.subject}`} className={`border-b border-slate-100 ${gradeChanged && idx > 0 ? 'border-t-2 border-t-slate-300' : ''} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
+                                  <td className="px-4 py-3 font-bold text-slate-800 whitespace-nowrap">
+                                    {gradeChanged ? row.grade : ''}
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{row.subject}</td>
+                                  <td className="px-3 py-3 text-center font-semibold text-slate-600">{row.total}</td>
+                                  {[1,2,3,4,5,6,7].map(l => (
+                                    <td key={l} className="px-2 py-3 text-center">
+                                      {row.levels[l].count > 0 ? (
+                                        <div className={`inline-flex flex-col items-center rounded-lg px-2 py-1 ${LEVEL_STYLE[l]}`}>
+                                          <span className="font-bold text-sm leading-tight">{row.levels[l].count}</span>
+                                          <span className="text-[10px] leading-tight opacity-80">{row.levels[l].pct.toFixed(1)}%</span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-slate-200 text-xs">—</span>
+                                      )}
+                                    </td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-400">
+                        Each learner's scores across all assessments for the selected term are averaged to determine their CAPS Level. Totals reflect the number of learners with at least one result recorded.
+                      </div>
+                    </div>
+                  );
+                })()}
+              </motion.div>
+            )}
+
+            {/* ── Learners at Risk ── */}
+            {activeTab === 'at-risk' && (() => {
+              const TIER_CFG = {
+                high:   { label: 'High Risk',   bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-300',    dot: 'bg-red-500',    header: 'bg-red-600' },
+                medium: { label: 'Medium Risk',  bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-300',  dot: 'bg-amber-500',  header: 'bg-amber-600' },
+                watch:  { label: 'Watch',        bg: 'bg-yellow-50',  text: 'text-yellow-700', border: 'border-yellow-300', dot: 'bg-yellow-400', header: 'bg-yellow-500' },
+              } as const;
+              const allGrades = [...grades].sort((a, b) => GRADE_SORT(a.name) - GRADE_SORT(b.name));
+              const allSubjects = [...subjects].sort((a, b) => a.name.localeCompare(b.name));
+              const filtered = arData.filter(r =>
+                (arRiskFilter === 'all' || r.tier === arRiskFilter) &&
+                (!arGrade || r.grade === arGrade) &&
+                (!arSubject || r.subject.toLowerCase() === arSubject.toLowerCase())
+              );
+              const highCount = arData.filter(r => r.tier === 'high').length;
+              const medCount  = arData.filter(r => r.tier === 'medium').length;
+              const watchCount = arData.filter(r => r.tier === 'watch').length;
+              return (
+                <motion.div key="at-risk" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+                  {/* Header */}
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                        <ShieldAlert className="w-6 h-6 text-red-500" /> Learners at Risk
+                      </h2>
+                      <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+                        Learners flagged as being at risk of failing based on their historical results. Risk probability is calculated from current average vs pass mark and score trend across terms. Click any row to view recommended intervention strategies.
+                      </p>
+                    </div>
+                    <button onClick={fetchAtRisk} disabled={arLoading} className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-bold hover:bg-slate-700 transition-all shadow-sm whitespace-nowrap disabled:opacity-60">
+                      {arLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />} Refresh
+                    </button>
+                  </div>
+
+                  {/* Summary stats */}
+                  {!arLoading && arData.length > 0 && (
+                    <div className="grid grid-cols-3 gap-4">
+                      {(['high','medium','watch'] as const).map(tier => {
+                        const count = tier === 'high' ? highCount : tier === 'medium' ? medCount : watchCount;
+                        const cfg = TIER_CFG[tier];
+                        return (
+                          <button key={tier} onClick={() => setArRiskFilter(arRiskFilter === tier ? 'all' : tier)}
+                            className={`rounded-2xl border-2 p-4 text-left transition-all ${arRiskFilter === tier ? `${cfg.bg} ${cfg.border}` : 'bg-white border-slate-200 hover:border-slate-300'}`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
+                              <span className={`text-xs font-bold uppercase tracking-wide ${arRiskFilter === tier ? cfg.text : 'text-slate-500'}`}>{cfg.label}</span>
+                            </div>
+                            <p className={`text-3xl font-black ${arRiskFilter === tier ? cfg.text : 'text-slate-800'}`}>{count}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">learner–subject pairs</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Filters */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                    <div className="flex flex-wrap items-end gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Grade</label>
+                        <select value={arGrade} onChange={e => setArGrade(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                          <option value="">All Grades</option>
+                          {allGrades.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Subject</label>
+                        <select value={arSubject} onChange={e => setArSubject(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                          <option value="">All Subjects</option>
+                          {allSubjects.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Risk Level</label>
+                        <select value={arRiskFilter} onChange={e => setArRiskFilter(e.target.value as any)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                          <option value="all">All Levels</option>
+                          <option value="high">High Risk</option>
+                          <option value="medium">Medium Risk</option>
+                          <option value="watch">Watch</option>
+                        </select>
+                      </div>
+                      {!arLoading && filtered.length > 0 && (
+                        <div className="ml-auto text-xs text-slate-400 self-end pb-2.5">{filtered.length} learner–subject pairs</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5"><span className="font-bold text-green-600">↑ Improving</span> score rose &gt;5% from last term</span>
+                    <span className="text-slate-300">|</span>
+                    <span className="flex items-center gap-1.5"><span className="font-bold text-red-600">↓ Declining</span> score fell &gt;5% from last term</span>
+                    <span className="text-slate-300">|</span>
+                    <span className="flex items-center gap-1.5"><span className="font-bold text-slate-600">→ Stable</span> within ±5% of previous term</span>
+                    <span className="text-slate-300">|</span>
+                    <span className="flex items-center gap-1.5"><span className="font-bold text-blue-600">• New</span> first term on record</span>
+                  </div>
+
+                  {/* Content */}
+                  {arLoading ? (
+                    <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
+                      <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+                      <span className="font-medium">Analysing learner results…</span>
+                    </div>
+                  ) : arData.length === 0 ? (
+                    <div className="bg-green-50 rounded-2xl border border-green-200 p-10 text-center">
+                      <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-green-400" />
+                      <p className="font-bold text-green-700">No learners flagged as at risk.</p>
+                      <p className="text-sm text-green-600 mt-1">All learners with recorded results are currently performing above the risk threshold.</p>
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <div className="bg-slate-50 rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
+                      No results match the selected filters.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filtered.map(row => {
+                        const key = `${row.studentId}-${row.subject}`;
+                        const isOpen = arExpanded === key;
+                        const cfg = TIER_CFG[row.tier as keyof typeof TIER_CFG];
+                        const trendIcon = row.trend === 'up' ? '↑' : row.trend === 'down' ? '↓' : row.trend === 'new' ? '•' : '→';
+                        const trendColor = row.trend === 'up' ? 'text-green-600' : row.trend === 'down' ? 'text-red-600' : row.trend === 'new' ? 'text-blue-600' : 'text-slate-500';
+                        return (
+                          <div key={key} className={`rounded-2xl border-2 overflow-hidden transition-all ${isOpen ? cfg.border : 'border-slate-200 hover:border-slate-300'} bg-white shadow-sm`}>
+                            <button className="w-full text-left px-5 py-4" onClick={() => setArExpanded(isOpen ? null : key)}>
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${cfg.bg} ${cfg.text} border ${cfg.border} shrink-0`}>
+                                  <span className={`w-2 h-2 rounded-full ${cfg.dot}`} /> {cfg.label}
+                                </span>
+                                <span className="font-bold text-slate-900 text-sm">{row.studentName}</span>
+                                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">{row.grade}{row.section ? ` · ${row.section}` : ''}</span>
+                                <span className="text-xs font-medium text-slate-700 capitalize">{row.subject}</span>
+                                <div className="ml-auto flex items-center gap-4">
+                                  <div className="text-right hidden sm:block">
+                                    <div className="text-xs text-slate-400">Average</div>
+                                    <div className="font-bold text-slate-800 text-sm">{row.latest.toFixed(1)}%</div>
+                                  </div>
+                                  <div className="text-right hidden sm:block">
+                                    <div className="text-xs text-slate-400">Pass Mark</div>
+                                    <div className="font-bold text-slate-600 text-sm">{row.passmark}%</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-xs text-slate-400">Risk Prob.</div>
+                                    <div className={`font-black text-sm ${row.tier === 'high' ? 'text-red-600' : row.tier === 'medium' ? 'text-amber-600' : 'text-yellow-600'}`}>{(row.prob * 100).toFixed(0)}%</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-xs text-slate-400">Trend</div>
+                                    <div className={`font-black text-base ${trendColor}`}>{trendIcon}</div>
+                                  </div>
+                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-transform ${isOpen ? 'rotate-180' : ''} bg-slate-100`}>
+                                    <ChevronDown className="w-3 h-3 text-slate-500" />
+                                  </div>
+                                </div>
+                              </div>
+                            </button>
+                            {isOpen && (
+                              <div className={`border-t-2 ${cfg.border} px-5 py-4`}>
+                                <div className={`text-xs font-bold uppercase tracking-wider mb-3 ${cfg.text}`}>Recommended Intervention Strategies</div>
+                                <ul className="space-y-2">
+                                  {row.interventions.map((iv: string, i: number) => (
+                                    <li key={i} className="flex items-start gap-2.5 text-sm text-slate-700">
+                                      <span className={`mt-1 w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-black text-white ${row.tier === 'high' ? 'bg-red-500' : row.tier === 'medium' ? 'bg-amber-500' : 'bg-yellow-500'}`}>{i + 1}</span>
+                                      {iv}
+                                    </li>
+                                  ))}
+                                </ul>
+                                <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap gap-4 text-xs text-slate-500">
+                                  <span>CAPS Level: <strong className="text-slate-700">L{row.capsLevel}</strong></span>
+                                  <span>Current Avg: <strong className="text-slate-700">{row.latest.toFixed(1)}%</strong></span>
+                                  {row.prev !== null && <span>Previous Term: <strong className="text-slate-700">{row.prev.toFixed(1)}%</strong></span>}
+                                  <span>Pass Mark: <strong className="text-slate-700">{row.passmark}%</strong></span>
+                                  <span>Deficit: <strong className={row.passmark > row.latest ? 'text-red-600' : 'text-green-600'}>{(row.passmark - row.latest).toFixed(1)}%</strong></span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })()}
 
             {selectedProfileStudent && (
               <LearnerProfile 

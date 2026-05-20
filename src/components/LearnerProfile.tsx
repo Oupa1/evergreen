@@ -1,24 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { 
   X, 
   Download, 
   User, 
   Trophy, 
-  AlertCircle, 
   BookOpen, 
   FileText,
   Sparkles,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabase';
-import { generateLearnerReport } from '../lib/gemini';
+import { buildLocalReport } from '../lib/reportEngine';
 
 interface LearnerProfileProps {
   student: any;
-  results: any[]; // Kept for backward compatibility but will fetch internally
+  results: any[];
   subjects: any[];
   schoolInfo: any;
   onClose: () => void;
@@ -26,7 +26,6 @@ interface LearnerProfileProps {
 
 export default function LearnerProfile({ student, results: initialResults, subjects, schoolInfo, onClose }: LearnerProfileProps) {
   const [report, setReport] = useState<string>('');
-  const [isGenerating, setIsGenerating] = useState(false);
   const [studentResults, setStudentResults] = useState<any[]>(initialResults || []);
   const [isLoadingResults, setIsLoadingResults] = useState(true);
 
@@ -41,8 +40,7 @@ export default function LearnerProfile({ student, results: initialResults, subje
           .from('results')
           .select('*')
           .eq('student_id', student.id)
-          .eq('school_id', school_id);
-        
+          .or(`school_id.eq.${school_id},school_id.is.null`);
         if (error) throw error;
         setStudentResults(data || []);
       } catch (error) {
@@ -51,63 +49,58 @@ export default function LearnerProfile({ student, results: initialResults, subje
         setIsLoadingResults(false);
       }
     };
-
     fetchAllStudentResults();
   }, [student.id, school_id]);
 
   const getMarkColor = (score: number) => {
-    if (score >= 80) return 'text-amber-500'; // Gold
-    if (score >= 60) return 'text-emerald-600'; // Green
-    if (score >= 40) return 'text-blue-600'; // Blue
-    return 'text-red-600'; // Red
-  };
-
-  const getMarkBg = (score: number) => {
-    if (score >= 80) return 'bg-amber-50 border-amber-100';
-    if (score >= 60) return 'bg-emerald-50 border-emerald-100';
-    if (score >= 40) return 'bg-blue-50 border-blue-100';
-    return 'bg-red-50 border-red-100';
+    if (score >= 80) return 'text-amber-500';
+    if (score >= 60) return 'text-emerald-600';
+    if (score >= 40) return 'text-blue-600';
+    return 'text-red-600';
   };
 
   const studentSubjects = subjects.map(sub => {
     const res = studentResults.filter(r => r.subject_id === sub.id);
-    const avg = res.length > 0 
-      ? res.reduce((acc, curr) => acc + Number(curr.score), 0) / res.length 
+    const avg = res.length > 0
+      ? res.reduce((acc, curr) => acc + Number(curr.score), 0) / res.length
       : 0;
     return { name: sub.name, score: avg };
   }).filter(s => s.score > 0);
 
+  const [reportError, setReportError] = useState<string>('');
+
+  const handleGenerateReport = () => {
+    if (studentSubjects.length === 0) return;
+    setReportError('');
+    const fullName = `${student.last_name} ${student.first_name}`.trim();
+    const text = buildLocalReport(fullName, studentSubjects);
+    setReport(text);
+  };
+
+  // Auto-generate report once results are loaded
   useEffect(() => {
-    const fetchReport = async () => {
-      if (!isLoadingResults && studentSubjects.length > 0) {
-        setIsGenerating(true);
-        const aiReport = await generateLearnerReport(`${student.first_name} ${student.last_name}`, studentSubjects);
-        setReport(aiReport);
-        setIsGenerating(false);
-      }
-    };
-    fetchReport();
-  }, [student.id, isLoadingResults, studentSubjects.length]);
+    if (!isLoadingResults && studentSubjects.length > 0) {
+      handleGenerateReport();
+    }
+  }, [isLoadingResults]);
 
   const downloadPDF = () => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
-    
-    // Header
+
     doc.setFontSize(22);
-    doc.setTextColor(5, 150, 105); // Primary color
+    doc.setTextColor(5, 150, 105);
     doc.text(schoolInfo.name || 'School Name', pageWidth / 2, 20, { align: 'center' });
-    
+
     doc.setFontSize(14);
-    doc.setTextColor(100, 116, 139); // Slate 500
+    doc.setTextColor(100, 116, 139);
     doc.text('Learner Academic Profile', pageWidth / 2, 28, { align: 'center' });
-    
-    doc.setDrawColor(226, 232, 240); // Slate 200
+
+    doc.setDrawColor(226, 232, 240);
     doc.line(14, 35, pageWidth - 14, 35);
 
-    // Student Info
     doc.setFontSize(12);
-    doc.setTextColor(15, 23, 42); // Slate 900
+    doc.setTextColor(15, 23, 42);
     doc.text(`Name: ${student.first_name} ${student.last_name}`, 14, 45);
     doc.text(`Student ID: ${student.student_id}`, 14, 52);
     doc.text(`Grade: ${student.sections?.grades?.name || '-'}`, 14, 59);
@@ -117,7 +110,6 @@ export default function LearnerProfile({ student, results: initialResults, subje
     }
     doc.text(`Date: ${new Date().toLocaleDateString()}`, pageWidth - 14, 45, { align: 'right' });
 
-    // Academic Performance Table
     const tableStartY = student.phone ? 82 : 75;
     autoTable(doc, {
       startY: tableStartY,
@@ -135,19 +127,17 @@ export default function LearnerProfile({ student, results: initialResults, subje
 
     const finalY = (doc as any).lastAutoTable.finalY || 150;
 
-    // AI Report Section
     doc.setFontSize(14);
     doc.setTextColor(5, 150, 105);
     doc.text('Academic Insights & Recommendations', 14, finalY + 15);
-    
+
     doc.setFontSize(11);
-    doc.setTextColor(51, 65, 85); // Slate 700
-    const splitReport = doc.splitTextToSize(report || 'Generating report...', pageWidth - 28);
+    doc.setTextColor(51, 65, 85);
+    const splitReport = doc.splitTextToSize(report || 'No AI insight generated yet.', pageWidth - 28);
     doc.text(splitReport, 14, finalY + 25);
 
     const afterReportY = finalY + 25 + (splitReport.length * 5) + 10;
 
-    // Manual Comments Section
     doc.setFontSize(12);
     doc.setTextColor(5, 150, 105);
     doc.text('Additional Teacher Comments:', 14, afterReportY);
@@ -156,41 +146,33 @@ export default function LearnerProfile({ student, results: initialResults, subje
     doc.line(14, afterReportY + 18, pageWidth - 14, afterReportY + 18);
     doc.line(14, afterReportY + 28, pageWidth - 14, afterReportY + 28);
 
-    // Signature and Stamp Section
     const footerSectionY = afterReportY + 45;
-    
-    // Teacher Signature
     doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
     doc.line(14, footerSectionY, 80, footerSectionY);
     doc.text('Teacher Signature', 14, footerSectionY + 5);
-
-    // Date
     doc.line(100, footerSectionY, 140, footerSectionY);
     doc.text('Date', 100, footerSectionY + 5);
-
-    // School Stamp Box
     doc.setDrawColor(5, 150, 105);
     doc.rect(pageWidth - 64, footerSectionY - 20, 50, 25);
     doc.setFontSize(8);
     doc.text('OFFICIAL SCHOOL STAMP', pageWidth - 60, footerSectionY - 15);
 
-    // Footer
     doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184); // Slate 400
+    doc.setTextColor(148, 163, 184);
     doc.text(`Generated by ${schoolInfo.name} Management System`, pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: 'center' });
 
     doc.save(`${student.first_name}_${student.last_name}_Profile.pdf`);
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 md:p-8"
     >
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
@@ -207,14 +189,14 @@ export default function LearnerProfile({ student, results: initialResults, subje
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={downloadPDF}
               className="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold text-sm hover:bg-primary-700 transition-all shadow-lg shadow-primary-600/20"
             >
               <Download className="w-4 h-4" />
               Download PDF
             </button>
-            <button 
+            <button
               onClick={onClose}
               className="p-3 text-slate-400 hover:bg-slate-50 rounded-xl transition-colors"
             >
@@ -286,20 +268,30 @@ export default function LearnerProfile({ student, results: initialResults, subje
                   <Sparkles className="w-24 h-24 text-primary-600" />
                 </div>
                 <div className="relative z-10">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-primary-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-primary-600/20">
-                      <Sparkles className="w-5 h-5" />
+                  <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-primary-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-primary-600/20">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-lg font-bold text-primary-900">AI Academic Insights</h3>
                     </div>
-                    <h3 className="text-lg font-bold text-primary-900">AI Academic Insights</h3>
+                    {studentSubjects.length > 0 && (
+                      <button
+                        onClick={handleGenerateReport}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-bold hover:bg-primary-700 transition-all shadow-md shadow-primary-600/20"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Regenerate
+                      </button>
+                    )}
                   </div>
-                  {isGenerating ? (
-                    <div className="flex items-center gap-3 text-primary-600 font-medium">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Generating personalized report...
-                    </div>
+
+                  {report ? (
+                    <p className="text-primary-800 leading-relaxed font-medium">{report}</p>
                   ) : (
-                    <p className="text-primary-800 leading-relaxed font-medium">
-                      {report || "No data available to generate report."}
+                    <p className="text-primary-400 text-sm italic">
+                      {studentSubjects.length === 0
+                        ? 'No subject results available to analyse.'
+                        : 'Loading insights…'}
                     </p>
                   )}
                 </div>

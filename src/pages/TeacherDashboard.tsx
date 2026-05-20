@@ -31,19 +31,34 @@ import {
   Sparkles,
   BookMarked,
   ChevronDown,
-  BarChart2
+  BarChart2,
+  BarChart3,
+  NotebookPen,
+  CheckSquare,
+  Square,
+  Save,
+  PlusCircle,
+  ListChecks,
+  TrendingDown,
+  ShieldAlert,
+  AlertTriangle,
+  Download,
+  ChevronUp
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import LearnerProfile from '../components/LearnerProfile';
-import { generateQuizFromImage, generateCAPSLessonPlan, generateCAPSTermPlan } from '../lib/gemini';
+import { generateQuizFromImage } from '../lib/gemini';
+import { generateCAPSLessonPlan, generateCAPSTermPlan } from '../lib/lessonPlanEngine';
 
-type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking' | 'lesson-plan' | 'analysis-of-results';
+type Tab = 'overview' | 'results' | 'attendance' | 'timetable' | 'meetings' | 'materials' | 'learner-list' | 'subject-ranking' | 'lesson-plan' | 'analysis-of-results' | 'lesson-prep' | 'at-risk';
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
-  'maths': 40,
+  'maths': 50,
+  'mathematics': 50,
   'life skills': 40,
+  'life skill': 40,
   'xitsonga': 50,
   'nst': 40,
   'social science': 40,
@@ -58,6 +73,7 @@ const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: n
   if (!subjectName) return defaultPassMark || 40;
   const name = subjectName.toLowerCase();
   if (name.includes('xitsonga')) return 50;
+  if (name.includes('math')) return 50;
   return PASS_MARKS[name] || defaultPassMark || 40;
 };
 
@@ -118,6 +134,131 @@ export default function TeacherDashboard() {
   const [lpTotalWeeks, setLpTotalWeeks] = useState(10);
   const [lpTermPlan, setLpTermPlan] = useState<any>(null);
   const [lpError, setLpError] = useState('');
+
+  // Lesson Preparation
+  const DEFAULT_CHECKLIST = [
+    { id: 'objectives', label: 'Lesson objectives prepared and ready to write on the board', checked: false },
+    { id: 'resources', label: 'Teaching resources gathered (textbooks, worksheets, manipulatives)', checked: false },
+    { id: 'examples', label: 'Worked examples and practice problems prepared', checked: false },
+    { id: 'whiteboard', label: 'Whiteboard / projector checked and working', checked: false },
+    { id: 'seating', label: 'Seating arrangement planned for the lesson activity', checked: false },
+    { id: 'differentiation', label: 'Support and extension activities ready for all learner levels', checked: false },
+    { id: 'assessment', label: 'Formative assessment activity or questions planned', checked: false },
+    { id: 'homework', label: 'Homework task identified and ready to assign', checked: false },
+  ];
+  const [prepSubject, setPrepSubject] = useState('');
+  const [prepGrade, setPrepGrade] = useState('');
+  const [prepDate, setPrepDate] = useState(new Date().toISOString().split('T')[0]);
+  const [prepPeriod, setPrepPeriod] = useState('');
+  const [prepNotes, setPrepNotes] = useState('');
+  const [prepChecklist, setPrepChecklist] = useState<{id: string; label: string; checked: boolean}[]>(DEFAULT_CHECKLIST);
+  const [prepResources, setPrepResources] = useState<string[]>([]);
+  const [prepNewResource, setPrepNewResource] = useState('');
+  const [prepNewItem, setPrepNewItem] = useState('');
+  const [prepSavedAt, setPrepSavedAt] = useState<string | null>(null);
+  const [riskGrade, setRiskGrade] = useState('');
+  const [riskSubject, setRiskSubject] = useState('');
+  const [riskFilter, setRiskFilter] = useState<'all' | 'high' | 'medium' | 'watch'>('all');
+  const [riskData, setRiskData] = useState<any[]>([]);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskExpanded, setRiskExpanded] = useState<string | null>(null);
+
+  const getPrepKey = () => {
+    const uid = localStorage.getItem('user_id') || 'teacher';
+    return `prep_${uid}_${prepSubject}_${prepGrade}_${prepDate}`;
+  };
+
+  const savePrep = () => {
+    const key = getPrepKey();
+    const data = { prepNotes, prepChecklist, prepResources, prepPeriod };
+    localStorage.setItem(key, JSON.stringify(data));
+    setPrepSavedAt(new Date().toLocaleTimeString());
+  };
+
+  const loadPrep = (subjectId: string, gradeId: string, date: string) => {
+    const uid = localStorage.getItem('user_id') || 'teacher';
+    const key = `prep_${uid}_${subjectId}_${gradeId}_${date}`;
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        setPrepNotes(data.prepNotes || '');
+        setPrepChecklist(data.prepChecklist || DEFAULT_CHECKLIST);
+        setPrepResources(data.prepResources || []);
+        setPrepPeriod(data.prepPeriod || '');
+        setPrepSavedAt(null);
+      } catch { /* ignore */ }
+    } else {
+      setPrepNotes('');
+      setPrepChecklist(DEFAULT_CHECKLIST.map(i => ({ ...i, checked: false })));
+      setPrepResources([]);
+      setPrepPeriod('');
+      setPrepSavedAt(null);
+    }
+  };
+
+  const handlePrepPrint = () => {
+    const subjectName = subjects.find((s: any) => s.id === prepSubject)?.name || '—';
+    const gradeName = grades.find((g: any) => g.id === prepGrade)?.name || '—';
+    const checked = prepChecklist.filter(i => i.checked).length;
+    const total = prepChecklist.length;
+    const checkRows = prepChecklist.map(item => `
+      <tr>
+        <td style="width:24px;text-align:center;font-size:16px">${item.checked ? '✓' : '○'}</td>
+        <td style="color:${item.checked ? '#059669' : '#374151'};text-decoration:${item.checked ? 'none' : 'none'}">${item.label}</td>
+      </tr>`).join('');
+    const resourceRows = prepResources.map(r => `<li>${r}</li>`).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+    <title>Lesson Preparation — ${subjectName} ${gradeName}</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1e293b;background:#fff;padding:28px}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:20px;padding-bottom:14px;border-bottom:3px solid #2563eb}
+      .header img{height:52px;width:52px;object-fit:contain;border-radius:8px}
+      .header h1{font-size:20px;font-weight:bold;color:#1e293b;margin:0 0 2px}
+      .header h2{font-size:13px;font-weight:500;color:#64748b;margin:0}
+      .meta{display:flex;flex-wrap:wrap;gap:24px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;margin-bottom:18px;font-size:11px}
+      .meta strong{display:block;font-size:9px;text-transform:uppercase;color:#94a3b8;margin-bottom:2px}
+      .progress{background:#e2e8f0;border-radius:4px;height:8px;margin-bottom:18px}
+      .progress-bar{background:#2563eb;height:8px;border-radius:4px;width:${total > 0 ? Math.round((checked/total)*100) : 0}%}
+      h3{font-size:13px;font-weight:bold;color:#1e293b;margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+      table{width:100%;border-collapse:collapse;margin-bottom:16px}
+      td{padding:5px 8px;vertical-align:top;border-bottom:1px solid #f1f5f9;font-size:11px}
+      ul{padding-left:20px;margin-bottom:16px}
+      li{margin-bottom:4px;font-size:11px}
+      .notes-box{background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px;min-height:80px;font-size:11px;line-height:1.6;margin-bottom:16px;white-space:pre-wrap}
+      .footer{margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px;text-align:center}
+      .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:bold;background:#dbeafe;color:#1d4ed8}
+    </style></head><body>
+    <div class="header">
+      ${schoolInfo?.logo ? `<img src="${schoolInfo.logo}" alt="Logo"/>` : ''}
+      <div>
+        <h1>${schoolInfo?.name || 'School'}</h1>
+        <h2>Lesson Preparation Sheet</h2>
+      </div>
+    </div>
+    <div class="meta">
+      <div><strong>Subject</strong>${subjectName}</div>
+      <div><strong>Grade</strong>${gradeName}</div>
+      <div><strong>Date</strong>${prepDate}</div>
+      ${prepPeriod ? `<div><strong>Period / Time</strong>${prepPeriod}</div>` : ''}
+      <div><strong>Readiness</strong><span class="badge">${checked}/${total} items complete</span></div>
+    </div>
+    <div class="progress"><div class="progress-bar"></div></div>
+    <h3>Preparation Checklist</h3>
+    <table>${checkRows}</table>
+    ${prepResources.length > 0 ? `<h3>Resources Needed</h3><ul>${resourceRows}</ul>` : ''}
+    ${prepNotes ? `<h3>Teacher Preparation Notes</h3><div class="notes-box">${prepNotes}</div>` : ''}
+    <div class="footer">Generated by ${schoolInfo?.name || 'School'} Management System · ${new Date().toLocaleString()}</div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 400);
+  };
+
   // Analysis of Results
   const [arGrade, setArGrade] = useState('');
   const [arSection, setArSection] = useState('');
@@ -330,6 +471,159 @@ export default function TeacherDashboard() {
       fetchClassData();
     }
   }, [selectedClass, attendanceDate]);
+
+  // ── Learners at Risk (Teacher) ────────────────────────────────────────────
+  const tGetInterventions = (capsLevel: number, subjectName: string, trend: string): string[] => {
+    const s = subjectName.toLowerCase();
+    const isMaths = s.includes('math');
+    const isLang = s.includes('english') || s.includes('xitsonga') || s.includes('afrikaans') || s.includes('zulu') || s.includes('sesotho') || s.includes('sepedi') || s.includes('setswana');
+    const list: string[] = [];
+    if (capsLevel <= 1) {
+      list.push('Schedule an urgent individual support session with the learner');
+      list.push('Notify parent/guardian immediately and arrange a face-to-face meeting');
+      list.push('Refer to school learning support or remedial programme');
+      list.push('Develop an Individual Support Plan (ISP) in consultation with the HOD');
+      if (isMaths) {
+        list.push('Daily number drills and basic operations revision (15 min per day)');
+        list.push('Use concrete manipulatives (counters, number lines) to build conceptual understanding');
+        list.push('Identify and address specific gaps using a diagnostic assessment');
+      } else if (isLang) {
+        list.push('Daily oral reading sessions with a reading partner or teacher');
+        list.push('Intensive vocabulary and phonics reinforcement activities');
+        list.push('Refer to a reading recovery or language support programme');
+      } else {
+        list.push('Provide simplified notes and structured study guides');
+        list.push('Break content into smaller achievable chunks with clear milestones');
+      }
+    } else if (capsLevel === 2) {
+      list.push('Assign a peer study buddy or organise a small-group session (2–4 learners)');
+      list.push('Send home a written progress concern notice to parents/guardians');
+      list.push('Provide additional targeted practice worksheets every week');
+      if (isMaths) {
+        list.push('Focus on foundational concepts before introducing new work');
+        list.push('Use visual models, number lines, and diagrams to support reasoning');
+      } else if (isLang) {
+        list.push('Guided reading group sessions twice per week');
+        list.push('Comprehension booster activities with scaffolded questions');
+      } else {
+        list.push('Use mind maps and graphic organisers for key concepts');
+        list.push('Regular low-stakes formative quizzes to build confidence');
+      }
+    } else {
+      list.push('Provide differentiated in-class support activities');
+      list.push('Weekly mini-assessments to monitor progress closely');
+      list.push('Encourage peer discussion and collaborative learning');
+      if (isMaths) list.push('Additional targeted problem-solving practice at home');
+      else if (isLang) list.push('Targeted comprehension and writing exercises');
+      else list.push('Encourage self-study using provided notes and resources');
+    }
+    if (trend === 'down') {
+      list.push('Investigate root cause of declining performance (home environment, motivation, health)');
+      list.push('Increase check-in frequency — brief individual conversations once or twice a week');
+    }
+    return list;
+  };
+
+  const tCapsLevel = (score: number): number => {
+    if (score >= 80) return 7; if (score >= 70) return 6; if (score >= 60) return 5;
+    if (score >= 50) return 4; if (score >= 40) return 3; if (score >= 30) return 2; return 1;
+  };
+
+  const fetchAtRisk = async () => {
+    setRiskLoading(true);
+    setRiskData([]);
+    try {
+      // Get students in teacher's assigned classes
+      const classIds = assignedClasses.map((c: any) => c.id);
+      if (classIds.length === 0) { setRiskLoading(false); return; }
+
+      const studentMap = new Map<string, { grade: string; section: string; name: string }>();
+      let sfrom = 0;
+      while (true) {
+        const { data: sdata } = await supabase
+          .from('students')
+          .select('id, name, sections(name, grades(name))')
+          .in('section_id', classIds)
+          .range(sfrom, sfrom + 499);
+        for (const s of (sdata || [])) {
+          const sec = Array.isArray(s.sections) ? s.sections[0] : s.sections;
+          const gradeObj = Array.isArray(sec?.grades) ? sec.grades[0] : sec?.grades;
+          const gName = gradeObj?.name || '';
+          if (gName) studentMap.set(String(s.id), { grade: gName, section: sec?.name || '', name: s.name || '' });
+        }
+        if ((sdata || []).length < 500) break;
+        sfrom += 500;
+      }
+
+      const stuIds = [...studentMap.keys()];
+      if (stuIds.length === 0) { setRiskLoading(false); return; }
+
+      let allRows: any[] = [];
+      let rfrom = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('results')
+          .select('score, student_id, term, year, subjects(name)')
+          .eq('school_id', school_id)
+          .in('student_id', stuIds.map(Number))
+          .range(rfrom, rfrom + 499);
+        if (error) throw error;
+        allRows = [...allRows, ...(data || [])];
+        if ((data || []).length < 500) break;
+        rfrom += 500;
+      }
+
+      const groupMap = new Map<string, { termScores: Map<string, number[]>; info: any; subject: string }>();
+      for (const row of allRows) {
+        const score = Number(row.score);
+        if (isNaN(score)) continue;
+        const subj = (row.subjects?.name || '').trim();
+        if (!subj) continue;
+        const sid = String(row.student_id);
+        const info = studentMap.get(sid);
+        if (!info) continue;
+        const key = `${sid}|||${subj}`;
+        if (!groupMap.has(key)) groupMap.set(key, { termScores: new Map(), info, subject: subj });
+        const termKey = `${row.year}|${row.term}`;
+        const g = groupMap.get(key)!;
+        if (!g.termScores.has(termKey)) g.termScores.set(termKey, []);
+        g.termScores.get(termKey)!.push(score);
+      }
+
+      const rows: any[] = [];
+      for (const [key, { termScores, info, subject }] of groupMap.entries()) {
+        const sorted = [...termScores.keys()].sort((a, b) => {
+          const [ya, ta] = a.split('|'); const [yb, tb] = b.split('|');
+          return (parseInt(ya) * 10 + (parseInt(ta.replace(/\D/g, '')) || 1)) - (parseInt(yb) * 10 + (parseInt(tb.replace(/\D/g, '')) || 1));
+        });
+        const termAvgs = sorted.map(tk => { const sc = termScores.get(tk)!; return sc.reduce((a, b) => a + b, 0) / sc.length; });
+        const latest = termAvgs[termAvgs.length - 1];
+        const prev = termAvgs.length >= 2 ? termAvgs[termAvgs.length - 2] : null;
+        const trend = prev === null ? 'new' : latest > prev + 5 ? 'up' : latest < prev - 5 ? 'down' : 'stable';
+        const passmark = getSubjectPassMark(subject);
+        const capsLevel = tCapsLevel(latest);
+        const deficit = passmark - latest;
+        let prob = deficit > 0 ? 0.5 + (deficit / passmark) * 0.45 : Math.max(0, 0.35 - ((-deficit) / passmark) * 0.5);
+        if (trend === 'down') prob = Math.min(0.99, prob + 0.1);
+        if (trend === 'up') prob = Math.max(0, prob - 0.1);
+        prob = Math.min(0.99, Math.max(0, prob));
+        if (prob < 0.20) continue;
+        const tier = prob >= 0.60 ? 'high' : prob >= 0.35 ? 'medium' : 'watch';
+        const [sid] = key.split('|||');
+        rows.push({ studentId: sid, studentName: info.name, grade: info.grade, section: info.section, subject, latest, prev, trend, passmark, prob, tier, capsLevel, interventions: tGetInterventions(capsLevel, subject, trend) });
+      }
+      rows.sort((a, b) => (['high','medium','watch'].indexOf(a.tier)) - (['high','medium','watch'].indexOf(b.tier)) || a.grade.localeCompare(b.grade) || a.studentName.localeCompare(b.studentName));
+      setRiskData(rows);
+    } catch (err: any) {
+      console.error('Teacher at-risk fetch error:', err.message);
+    } finally {
+      setRiskLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'at-risk' && assignedClasses.length > 0) fetchAtRisk();
+  }, [activeTab]);
 
   const fetchLearnerList = async () => {
     if (!llSubject) return;
@@ -1318,7 +1612,9 @@ export default function TeacherDashboard() {
             { id: 'timetable', icon: Calendar, label: 'Timetable' },
             { id: 'meetings', icon: Bell, label: 'Meetings' },
             { id: 'lesson-plan', icon: BookMarked, label: 'Lesson Plan' },
+            { id: 'lesson-prep', icon: NotebookPen, label: 'Lesson Preparation' },
             { id: 'materials', icon: FileText, label: 'Materials' },
+            { id: 'at-risk', icon: ShieldAlert, label: 'Learners at Risk' },
           ].map((item) => (
             <button
               key={item.id}
@@ -1650,7 +1946,53 @@ export default function TeacherDashboard() {
                         </select>
                       </div>
 
-                      <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                      {/* Mobile card list */}
+                      <div className="md:hidden space-y-3">
+                        {students.sort((a, b) => a.first_name.localeCompare(b.first_name)).map(student => {
+                          const studentResults = results.filter(r =>
+                            r.student_id === student.id &&
+                            r.term === resultsSelectedTerm &&
+                            String(r.year) === resultsSelectedYear
+                          );
+                          let total = 0; let count = 0; let failed = false;
+                          const rows = subjects.map(subject => {
+                            const result = studentResults.find(r => r.subject_id === subject.id);
+                            const score = result ? Number(result.score) : null;
+                            const passMark = getSubjectPassMark(subject.name, subject.pass_mark);
+                            if (score !== null) { total += score; count++; if (score < passMark) failed = true; }
+                            return { subject, score, isPass: score !== null ? score >= passMark : null };
+                          });
+                          const avg = count > 0 ? `${(total / count).toFixed(1)}%` : null;
+                          return (
+                            <div key={student.id} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+                              <div className="flex items-center justify-between mb-3">
+                                <p className="font-bold text-slate-900">{student.first_name} {student.last_name}</p>
+                                {avg && (
+                                  <div className="text-right">
+                                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${!failed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{!failed ? 'Pass' : 'Fail'}</span>
+                                    <p className={`text-base font-black mt-0.5 ${getMarkColor(total / count)}`}>{avg}</p>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="divide-y divide-slate-50">
+                                {rows.map(({ subject, score, isPass }) => (
+                                  <div key={subject.id} className="flex items-center justify-between py-2">
+                                    <span className="text-sm text-slate-600">{subject.name}</span>
+                                    {score !== null ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className={`text-sm font-bold ${getMarkColor(score)}`}>{score}%</span>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isPass ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>{isPass ? 'P' : 'F'}</span>
+                                      </div>
+                                    ) : <span className="text-slate-300 text-sm">—</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* Desktop table */}
+                      <div className="hidden md:block overflow-x-auto border border-slate-100 rounded-2xl">
                         <table className="w-full border-collapse">
                           <thead>
                             <tr className="bg-slate-50 border-b border-slate-100">
@@ -3066,6 +3408,427 @@ export default function TeacherDashboard() {
               )}
             </motion.div>
           )}
+
+          {/* ── Lesson Preparation ── */}
+          {activeTab === 'lesson-prep' && (
+            <motion.div key="lesson-prep" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+
+              {/* Header */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Lesson Preparation</h2>
+                  <p className="text-sm text-slate-500 mt-1">Prepare for an upcoming lesson — checklist, resources, and notes. Saves automatically per lesson.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {prepSavedAt && (
+                    <span className="text-xs text-emerald-600 font-medium">Saved at {prepSavedAt}</span>
+                  )}
+                  <button
+                    onClick={savePrep}
+                    disabled={!prepSubject || !prepGrade}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all shadow-md shadow-blue-600/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Save className="w-4 h-4" /> Save
+                  </button>
+                  <button
+                    onClick={handlePrepPrint}
+                    disabled={!prepSubject || !prepGrade}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Printer className="w-4 h-4" /> Print Sheet
+                  </button>
+                </div>
+              </div>
+
+              {/* Selectors */}
+              <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6">
+                <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
+                  <NotebookPen className="w-4 h-4 text-blue-500" /> Lesson Details
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Subject</label>
+                    <select
+                      value={prepSubject}
+                      onChange={e => { setPrepSubject(e.target.value); loadPrep(e.target.value, prepGrade, prepDate); }}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="">Select subject</option>
+                      {subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Grade</label>
+                    <select
+                      value={prepGrade}
+                      onChange={e => { setPrepGrade(e.target.value); loadPrep(prepSubject, e.target.value, prepDate); }}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="">Select grade</option>
+                      {grades.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Date</label>
+                    <input
+                      type="date"
+                      value={prepDate}
+                      onChange={e => { setPrepDate(e.target.value); loadPrep(prepSubject, prepGrade, e.target.value); }}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Period / Time</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Period 2 / 09:00"
+                      value={prepPeriod}
+                      onChange={e => setPrepPeriod(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Readiness progress bar */}
+              {(() => {
+                const done = prepChecklist.filter(i => i.checked).length;
+                const total = prepChecklist.length;
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                const color = pct === 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-blue-500' : pct >= 30 ? 'bg-amber-500' : 'bg-red-400';
+                const label = pct === 100 ? 'Ready to teach!' : pct >= 60 ? 'Almost ready' : pct >= 30 ? 'In progress' : 'Not started';
+                return (
+                  <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm px-6 py-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                        <ListChecks className="w-4 h-4 text-blue-500" /> Readiness
+                      </span>
+                      <span className={`text-xs font-bold px-3 py-1 rounded-full ${pct === 100 ? 'bg-emerald-100 text-emerald-700' : pct >= 60 ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {done}/{total} · {label}
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                      <div className={`h-3 rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid md:grid-cols-2 gap-6">
+
+                {/* Checklist */}
+                <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+                  <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 text-blue-500" /> Preparation Checklist
+                  </h3>
+                  <div className="space-y-2">
+                    {prepChecklist.map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => setPrepChecklist(prev => prev.map(i => i.id === item.id ? { ...i, checked: !i.checked } : i))}
+                        className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl text-left transition-all border ${item.checked ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}`}
+                      >
+                        {item.checked
+                          ? <CheckSquare className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                          : <Square className="w-5 h-5 text-slate-300 flex-shrink-0 mt-0.5" />
+                        }
+                        <span className={`text-sm font-medium leading-snug ${item.checked ? 'text-emerald-800 line-through decoration-emerald-400' : 'text-slate-700'}`}>
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Add custom checklist item */}
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      placeholder="Add a custom preparation item…"
+                      value={prepNewItem}
+                      onChange={e => setPrepNewItem(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && prepNewItem.trim()) {
+                          setPrepChecklist(prev => [...prev, { id: `custom_${Date.now()}`, label: prepNewItem.trim(), checked: false }]);
+                          setPrepNewItem('');
+                        }
+                      }}
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!prepNewItem.trim()) return;
+                        setPrepChecklist(prev => [...prev, { id: `custom_${Date.now()}`, label: prepNewItem.trim(), checked: false }]);
+                        setPrepNewItem('');
+                      }}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right column: Notes + Resources */}
+                <div className="flex flex-col gap-6">
+
+                  {/* Teacher Notes */}
+                  <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6 flex flex-col gap-3">
+                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <NotebookPen className="w-4 h-4 text-blue-500" /> Teacher Preparation Notes
+                    </h3>
+                    <textarea
+                      rows={7}
+                      placeholder="Write your personal preparation notes here — key points to remember, common misconceptions to address, timing reminders, seating notes, etc."
+                      value={prepNotes}
+                      onChange={e => setPrepNotes(e.target.value)}
+                      className="w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-slate-700 placeholder-slate-400 focus:ring-2 focus:ring-amber-400 focus:outline-none resize-none leading-relaxed"
+                    />
+                  </div>
+
+                  {/* Resources Needed */}
+                  <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm p-6 flex flex-col gap-3">
+                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-blue-500" /> Resources Needed
+                    </h3>
+                    {prepResources.length === 0 && (
+                      <p className="text-xs text-slate-400 italic">No resources added yet. Add the specific materials you need to gather.</p>
+                    )}
+                    <ul className="space-y-2">
+                      {prepResources.map((r, idx) => (
+                        <li key={idx} className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 rounded-xl border border-slate-200">
+                          <span className="text-sm text-slate-700">{r}</span>
+                          <button onClick={() => setPrepResources(prev => prev.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors flex-shrink-0">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. Fraction strips, Grade 4 textbook p.45…"
+                        value={prepNewResource}
+                        onChange={e => setPrepNewResource(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && prepNewResource.trim()) {
+                            setPrepResources(prev => [...prev, prepNewResource.trim()]);
+                            setPrepNewResource('');
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                      <button
+                        onClick={() => {
+                          if (!prepNewResource.trim()) return;
+                          setPrepResources(prev => [...prev, prepNewResource.trim()]);
+                          setPrepNewResource('');
+                        }}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* Empty state prompt */}
+              {!prepSubject && !prepGrade && (
+                <div className="bg-blue-50 border border-blue-200 rounded-[2rem] p-8 text-center">
+                  <NotebookPen className="w-12 h-12 text-blue-300 mx-auto mb-3" />
+                  <p className="font-bold text-blue-700">Select a subject and grade above to begin your lesson preparation.</p>
+                  <p className="text-sm text-blue-500 mt-1">Your preparation notes and checklist are saved automatically per subject, grade, and date.</p>
+                </div>
+              )}
+
+            </motion.div>
+          )}
+
+          {/* ── Learners at Risk (Teacher) ── */}
+          {activeTab === 'at-risk' && (() => {
+            const TIER_CFG = {
+              high:   { label: 'High Risk',  bg: 'bg-red-100',   text: 'text-red-700',    border: 'border-red-300',    dot: 'bg-red-500'    },
+              medium: { label: 'Medium Risk', bg: 'bg-amber-100', text: 'text-amber-700',  border: 'border-amber-300',  dot: 'bg-amber-500'  },
+              watch:  { label: 'Watch',       bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-300', dot: 'bg-yellow-400' },
+            } as const;
+            const allGrades = [...grades].sort((a: any, b: any) => {
+              const n = (g: string) => g.toLowerCase().replace(/^grade\s*/, '');
+              const ai = n(a.name), bi = n(b.name);
+              if (ai === 'r') return -1; if (bi === 'r') return 1;
+              return parseInt(ai) - parseInt(bi);
+            });
+            const allSubjects = [...subjects].sort((a: any, b: any) => a.name.localeCompare(b.name));
+            const filtered = riskData.filter(r =>
+              (riskFilter === 'all' || r.tier === riskFilter) &&
+              (!riskGrade || r.grade === riskGrade) &&
+              (!riskSubject || r.subject.toLowerCase() === riskSubject.toLowerCase())
+            );
+            const highCount  = riskData.filter(r => r.tier === 'high').length;
+            const medCount   = riskData.filter(r => r.tier === 'medium').length;
+            const watchCount = riskData.filter(r => r.tier === 'watch').length;
+            return (
+              <motion.div key="at-risk" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
+                {/* Header */}
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                      <ShieldAlert className="w-6 h-6 text-red-500" /> Learners at Risk
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+                      Learners from your classes flagged as being at risk of failing, based on historical results. Risk probability is calculated from current average vs pass mark and score trend across terms. Click any row to view recommended intervention strategies.
+                    </p>
+                  </div>
+                  <button onClick={fetchAtRisk} disabled={riskLoading} className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-bold hover:bg-slate-700 transition-all shadow-sm whitespace-nowrap disabled:opacity-60">
+                    {riskLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />} Refresh
+                  </button>
+                </div>
+
+                {/* Summary stat cards */}
+                {!riskLoading && riskData.length > 0 && (
+                  <div className="grid grid-cols-3 gap-4">
+                    {(['high','medium','watch'] as const).map(tier => {
+                      const count = tier === 'high' ? highCount : tier === 'medium' ? medCount : watchCount;
+                      const cfg = TIER_CFG[tier];
+                      return (
+                        <button key={tier} onClick={() => setRiskFilter(riskFilter === tier ? 'all' : tier)}
+                          className={`rounded-2xl border-2 p-4 text-left transition-all ${riskFilter === tier ? `${cfg.bg} ${cfg.border}` : 'bg-white border-slate-200 hover:border-slate-300'}`}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`w-2.5 h-2.5 rounded-full ${cfg.dot}`} />
+                            <span className={`text-xs font-bold uppercase tracking-wide ${riskFilter === tier ? cfg.text : 'text-slate-500'}`}>{cfg.label}</span>
+                          </div>
+                          <p className={`text-3xl font-black ${riskFilter === tier ? cfg.text : 'text-slate-800'}`}>{count}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">learner–subject pairs</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Filters */}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Grade</label>
+                      <select value={riskGrade} onChange={e => setRiskGrade(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                        <option value="">All Grades</option>
+                        {allGrades.map((g: any) => <option key={g.name} value={g.name}>{g.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Subject</label>
+                      <select value={riskSubject} onChange={e => setRiskSubject(e.target.value)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                        <option value="">All Subjects</option>
+                        {allSubjects.map((s: any) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">Risk Level</label>
+                      <select value={riskFilter} onChange={e => setRiskFilter(e.target.value as any)} className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-red-400 focus:outline-none">
+                        <option value="all">All Levels</option>
+                        <option value="high">High Risk</option>
+                        <option value="medium">Medium Risk</option>
+                        <option value="watch">Watch</option>
+                      </select>
+                    </div>
+                    {!riskLoading && filtered.length > 0 && (
+                      <div className="ml-auto text-xs text-slate-400 self-end pb-2.5">{filtered.length} learner–subject pairs</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Trend legend */}
+                <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+                  <span><span className="font-bold text-green-600">↑ Improving</span> — score rose &gt;5% from last term</span>
+                  <span className="text-slate-300">|</span>
+                  <span><span className="font-bold text-red-600">↓ Declining</span> — score fell &gt;5% from last term</span>
+                  <span className="text-slate-300">|</span>
+                  <span><span className="font-bold text-slate-600">→ Stable</span> — within ±5% of previous term</span>
+                  <span className="text-slate-300">|</span>
+                  <span><span className="font-bold text-blue-600">• New</span> — first term on record</span>
+                </div>
+
+                {/* Content */}
+                {riskLoading ? (
+                  <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
+                    <Loader2 className="w-6 h-6 animate-spin text-red-500" />
+                    <span className="font-medium">Analysing learner results…</span>
+                  </div>
+                ) : riskData.length === 0 ? (
+                  <div className="bg-green-50 rounded-2xl border border-green-200 p-10 text-center">
+                    <CheckCircle className="w-10 h-10 mx-auto mb-3 text-green-400" />
+                    <p className="font-bold text-green-700">No learners flagged as at risk.</p>
+                    <p className="text-sm text-green-600 mt-1">All learners with recorded results are currently performing above the risk threshold.</p>
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <div className="bg-slate-50 rounded-2xl border border-slate-200 p-8 text-center text-slate-400">No results match the selected filters.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {filtered.map(row => {
+                      const key = `${row.studentId}-${row.subject}`;
+                      const isOpen = riskExpanded === key;
+                      const cfg = TIER_CFG[row.tier as keyof typeof TIER_CFG];
+                      const trendIcon = row.trend === 'up' ? '↑' : row.trend === 'down' ? '↓' : row.trend === 'new' ? '•' : '→';
+                      const trendColor = row.trend === 'up' ? 'text-green-600' : row.trend === 'down' ? 'text-red-600' : row.trend === 'new' ? 'text-blue-600' : 'text-slate-500';
+                      return (
+                        <div key={key} className={`rounded-2xl border-2 overflow-hidden transition-all ${isOpen ? cfg.border : 'border-slate-200 hover:border-slate-300'} bg-white shadow-sm`}>
+                          <button className="w-full text-left px-5 py-4" onClick={() => setRiskExpanded(isOpen ? null : key)}>
+                            <div className="flex flex-wrap items-center gap-3">
+                              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${cfg.bg} ${cfg.text} border ${cfg.border} shrink-0`}>
+                                <span className={`w-2 h-2 rounded-full ${cfg.dot}`} /> {cfg.label}
+                              </span>
+                              <span className="font-bold text-slate-900 text-sm">{row.studentName}</span>
+                              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">{row.grade}{row.section ? ` · ${row.section}` : ''}</span>
+                              <span className="text-xs font-medium text-slate-700 capitalize">{row.subject}</span>
+                              <div className="ml-auto flex items-center gap-4">
+                                <div className="text-right hidden sm:block">
+                                  <div className="text-xs text-slate-400">Average</div>
+                                  <div className="font-bold text-slate-800 text-sm">{row.latest.toFixed(1)}%</div>
+                                </div>
+                                <div className="text-right hidden sm:block">
+                                  <div className="text-xs text-slate-400">Pass Mark</div>
+                                  <div className="font-bold text-slate-600 text-sm">{row.passmark}%</div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs text-slate-400">Risk Prob.</div>
+                                  <div className={`font-black text-sm ${row.tier === 'high' ? 'text-red-600' : row.tier === 'medium' ? 'text-amber-600' : 'text-yellow-600'}`}>{(row.prob * 100).toFixed(0)}%</div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs text-slate-400">Trend</div>
+                                  <div className={`font-black text-base ${trendColor}`}>{trendIcon}</div>
+                                </div>
+                                <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-transform ${isOpen ? 'rotate-180' : ''} bg-slate-100`}>
+                                  <ChevronDown className="w-3 h-3 text-slate-500" />
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                          {isOpen && (
+                            <div className={`border-t-2 ${cfg.border} px-5 py-4`}>
+                              <div className={`text-xs font-bold uppercase tracking-wider mb-3 ${cfg.text}`}>Recommended Intervention Strategies</div>
+                              <ul className="space-y-2">
+                                {row.interventions.map((iv: string, i: number) => (
+                                  <li key={i} className="flex items-start gap-2.5 text-sm text-slate-700">
+                                    <span className={`mt-1 w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-black text-white ${row.tier === 'high' ? 'bg-red-500' : row.tier === 'medium' ? 'bg-amber-500' : 'bg-yellow-500'}`}>{i + 1}</span>
+                                    {iv}
+                                  </li>
+                                ))}
+                              </ul>
+                              <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap gap-4 text-xs text-slate-500">
+                                <span>CAPS Level: <strong className="text-slate-700">L{row.capsLevel}</strong></span>
+                                <span>Current Avg: <strong className="text-slate-700">{row.latest.toFixed(1)}%</strong></span>
+                                {row.prev !== null && <span>Previous Term: <strong className="text-slate-700">{row.prev.toFixed(1)}%</strong></span>}
+                                <span>Pass Mark: <strong className="text-slate-700">{row.passmark}%</strong></span>
+                                <span>Deficit: <strong className={row.passmark > row.latest ? 'text-red-600' : 'text-green-600'}>{(row.passmark - row.latest).toFixed(1)}%</strong></span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            );
+          })()}
 
           {selectedProfileStudent && (
             <LearnerProfile 

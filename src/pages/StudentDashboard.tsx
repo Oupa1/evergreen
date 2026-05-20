@@ -32,13 +32,16 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Student, Result, Subject } from '../types';
-import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { AnimatePresence } from 'motion/react';
 
 const PASS_MARKS: Record<string, number> = {
   'english': 40,
-  'maths': 40,
+  'maths': 50,
+  'mathematics': 50,
   'life skills': 40,
+  'life skill': 40,
   'xitsonga': 50,
   'nst': 40,
   'social science': 40,
@@ -52,6 +55,7 @@ const getSubjectPassMark = (subjectName: string | undefined, defaultPassMark?: n
   if (!subjectName) return defaultPassMark || 40;
   const name = subjectName.toLowerCase();
   if (name.includes('xitsonga')) return 50;
+  if (name.includes('math')) return 50;
   return PASS_MARKS[name] || defaultPassMark || 40;
 };
 
@@ -528,24 +532,74 @@ export default function StudentDashboard() {
       return;
     }
 
-    const reportData = filteredResults.map(r => {
-      const subjectName = r.subjects?.name || '';
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+
+    // Header bar
+    doc.setFillColor(37, 99, 235);
+    doc.rect(0, 0, pageW, 28, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Academic Results Report', pageW / 2, 12, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${selectedTerm} ${selectedYear}`, pageW / 2, 20, { align: 'center' });
+
+    // Student info
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${student.first_name} ${student.last_name}`, 14, 38);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Student No: ${student.student_number || 'N/A'}  |  Grade: ${student.grade || 'N/A'}`, 14, 44);
+
+    // Results table
+    const avg = filteredResults.length > 0
+      ? (filteredResults.reduce((a, c) => a + Number(c.score), 0) / filteredResults.length).toFixed(1)
+      : 'N/A';
+
+    const tableRows = filteredResults.map(r => {
+      const subjectName = r.subjects?.name || 'Unknown';
       const passMark = getSubjectPassMark(subjectName, r.subjects?.pass_mark);
-      
-      return {
-        'Subject': subjectName,
-        'Task': r.tasks?.name || 'Final Mark',
-        'Score (%)': r.score,
-        'Pass Mark (%)': passMark,
-        'Level': getLevel(Number(r.score)).level,
-        'Status': Number(r.score) >= passMark ? 'Pass' : 'Fail'
-      };
+      const score = Number(r.score);
+      const isPassed = score >= passMark;
+      return [
+        subjectName,
+        r.tasks?.name || 'Final Mark',
+        `${score}%`,
+        `${passMark}%`,
+        `L${getLevel(score).level}`,
+        isPassed ? 'PASS' : 'FAIL'
+      ];
     });
 
-    const ws = XLSX.utils.json_to_sheet(reportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `${selectedTerm} ${selectedYear}`);
-    XLSX.writeFile(wb, `${student.first_name}_${student.last_name}_${selectedTerm}_${selectedYear}_Report.xlsx`);
+    autoTable(doc, {
+      startY: 50,
+      head: [['Subject', 'Task / Assessment', 'Score', 'Pass Mark', 'Level', 'Status']],
+      body: tableRows,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 5) {
+          const val = data.cell.raw as string;
+          data.cell.styles.textColor = val === 'PASS' ? [5, 150, 105] : [220, 38, 38];
+          data.cell.styles.fontStyle = 'bold';
+        }
+      },
+    });
+
+    // Summary footer
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Overall Average: ${avg}%`, 14, finalY);
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-ZA')}`, pageW - 14, finalY, { align: 'right' });
+
+    doc.save(`${student.first_name}_${student.last_name}_${selectedTerm}_${selectedYear}_Report.pdf`);
   };
 
   const getLevel = (score: number) => {
@@ -656,6 +710,15 @@ export default function StudentDashboard() {
 
   const averageScore = filteredResults.length > 0 
     ? (filteredResults.reduce((acc, curr) => acc + Number(curr.score), 0) / filteredResults.length).toFixed(1)
+    : 'N/A';
+
+  const publishedResults = results.filter(r => {
+    const pub = resultPublications.find(p => p.term === r.term && p.year === r.year);
+    return pub?.is_published === true;
+  });
+
+  const overviewAvg = publishedResults.length > 0
+    ? (publishedResults.reduce((acc, curr) => acc + Number(curr.score), 0) / publishedResults.length).toFixed(1)
     : 'N/A';
   return (
     <div className="min-h-screen bg-slate-50 flex">
@@ -815,7 +878,7 @@ export default function StudentDashboard() {
                       </button>
                     </div>
                     <div className="space-y-4">
-                      {results.slice(0, 5).map((result, i) => (
+                      {publishedResults.slice(0, 5).map((result, i) => (
                         <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
                           <div className="flex items-center gap-4">
                             <div className={`p-3 rounded-xl bg-primary-50 text-primary-600`}>
@@ -834,8 +897,8 @@ export default function StudentDashboard() {
                           </div>
                         </div>
                       ))}
-                      {results.length === 0 && (
-                        <p className="text-sm text-slate-400 text-center py-8">No results uploaded yet.</p>
+                      {publishedResults.length === 0 && (
+                        <p className="text-sm text-slate-400 text-center py-8">No published results available yet.</p>
                       )}
                     </div>
                   </div>
@@ -848,13 +911,13 @@ export default function StudentDashboard() {
                     <h3 className="text-xl font-bold text-slate-900 mb-6">Performance</h3>
                     <div className="text-center py-4">
                       <div className="inline-flex items-center justify-center w-32 h-32 rounded-full border-8 border-primary-500 border-t-slate-100 rotate-45 mb-4">
-                        <span className="text-3xl font-bold text-slate-900 -rotate-45">{averageScore}</span>
+                        <span className="text-3xl font-bold text-slate-900 -rotate-45">{overviewAvg}</span>
                       </div>
                       <p className="text-slate-500 font-medium">Average Score</p>
                     </div>
                     <div className="grid grid-cols-1 gap-4 mt-6">
                       <div className="p-4 bg-slate-50 rounded-2xl text-center">
-                        <p className="text-2xl font-bold text-slate-900">{results.length}</p>
+                        <p className="text-2xl font-bold text-slate-900">{publishedResults.length}</p>
                         <p className="text-xs text-slate-500">Tests Taken</p>
                       </div>
                     </div>
@@ -1035,88 +1098,53 @@ export default function StudentDashboard() {
                       </div>
                     </div>
 
-                    <div className="overflow-hidden border border-slate-100 rounded-[2rem]">
-                      <table className="w-full border-collapse">
-                        <thead>
-                          <tr className="bg-slate-50/50 border-b border-slate-100">
-                            <th className="px-6 py-5 text-left font-bold text-slate-500 text-xs uppercase tracking-wider">Subject</th>
-                            <th className="px-6 py-5 text-left font-bold text-slate-500 text-xs uppercase tracking-wider">Task/Assessment</th>
-                            <th className="px-6 py-5 text-center font-bold text-slate-500 text-xs uppercase tracking-wider">Score</th>
-                            <th className="px-6 py-5 text-center font-bold text-slate-500 text-xs uppercase tracking-wider">Pass Mark</th>
-                            <th className="px-6 py-5 text-center font-bold text-slate-500 text-xs uppercase tracking-wider">Level</th>
-                            <th className="px-6 py-5 text-right font-bold text-slate-500 text-xs uppercase tracking-wider">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-50 bg-white">
-                          {filteredResults.map((result) => {
-                            const subject = result.subjects;
-                            const passMark = getSubjectPassMark(subject?.name, subject?.pass_mark);
-                            const isPassed = Number(result.score) >= passMark;
-                            
-                            return (
-                              <tr key={result.id} className="group hover:bg-slate-50/50 transition-all duration-200">
-                                <td className="px-6 py-5">
-                                  <div className="flex items-center gap-4">
-                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm ${
-                                      isPassed ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-                                    }`}>
-                                      {subject?.name?.[0] || 'S'}
-                                    </div>
-                                    <div>
-                                      <span className="font-bold text-slate-900 block">{subject?.name || 'Unknown Subject'}</span>
-                                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">{subject?.code || 'N/A'}</span>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-5">
-                                  <span className="text-sm font-medium text-slate-600">{result.tasks?.name || 'Final Mark'}</span>
-                                </td>
-                                <td className="px-6 py-5 text-center">
-                                  <div className="inline-flex flex-col items-center">
-                                    <span className={`text-lg font-black ${getMarkColor(Number(result.score))}`}>
-                                      {result.score}%
-                                    </span>
-                                    <div className="w-12 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
-                                      <div 
-                                        className={`h-full ${getMarkBarColor(Number(result.score))}`}
-                                        style={{ width: `${result.score}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-5 text-center">
-                                  <span className="text-sm font-bold text-slate-400">{passMark}%</span>
-                                </td>
-                                <td className="px-6 py-5 text-center">
-                                  <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-black border-2 ${
-                                    isPassed ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-red-50 border-red-100 text-red-700'
-                                  }`}>
-                                    {getLevel(Number(result.score)).level}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-5 text-right">
-                                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider ${
-                                    isPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                                  }`}>
-                                    {isPassed ? <CheckCircle2 className="w-3 h-3" /> : <X className="w-3 h-3" />}
-                                    {isPassed ? 'Pass' : 'Fail'}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {filteredResults.length === 0 && (
-                            <tr>
-                              <td colSpan={6} className="py-20 text-center">
-                                <div className="flex flex-col items-center gap-3 opacity-20">
-                                  <ClipboardList className="w-16 h-16" />
-                                  <p className="font-bold text-lg">No results found</p>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                    <div className="space-y-3">
+                      {filteredResults.map((result) => {
+                        const subject = result.subjects;
+                        const passMark = getSubjectPassMark(subject?.name, subject?.pass_mark);
+                        const score = Number(result.score);
+                        const isPassed = score >= passMark;
+                        const level = getLevel(score);
+
+                        return (
+                          <div key={result.id} className="bg-slate-50 rounded-2xl p-4 flex items-center gap-4">
+                            <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm ${
+                              isPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {subject?.name?.[0] || 'S'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-slate-900 truncate">{subject?.name || 'Unknown Subject'}</p>
+                              <p className="text-xs text-slate-400 font-medium truncate">{result.tasks?.name || 'Final Mark'}</p>
+                              <div className="mt-2 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                <div className={`h-full ${getMarkBarColor(score)}`} style={{ width: `${score}%` }} />
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right flex flex-col items-end gap-1">
+                              <span className={`text-xl font-black ${getMarkColor(score)}`}>{score}%</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                  isPassed ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-red-50 border-red-100 text-red-600'
+                                }`}>L{level.level}</span>
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
+                                  isPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {isPassed ? <CheckCircle2 className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                                  {isPassed ? 'Pass' : 'Fail'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {filteredResults.length === 0 && (
+                        <div className="py-20 text-center">
+                          <div className="flex flex-col items-center gap-3 opacity-20">
+                            <ClipboardList className="w-16 h-16" />
+                            <p className="font-bold text-lg">No results found</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
